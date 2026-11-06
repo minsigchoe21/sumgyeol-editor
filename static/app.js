@@ -313,7 +313,7 @@ async function relink() {   // 다른 PC에서 저장한 프로젝트면 src로 
   const need = (P.fetch || []).filter((f) => miss.includes(f.src));
   if (need.length) {   // Claude가 만든 초안: 영상·내레이션을 이 PC가 직접 받아요
     await api("/api/prefetch", { fetch: need }); const ov = document.createElement("div"); ov.id = "updOv"; document.body.appendChild(ov);
-    for (;;) { const st = await api("/api/prefetch/status"); ov.textContent = "초안 재료 " + (st.state || "받는 중…"); if (st.done) break; await new Promise((r) => setTimeout(r, 1500)); }
+    for (;;) { const st = await api("/api/prefetch/status", {}); ov.textContent = "초안 재료 " + (st.state || "받는 중…"); if (st.done) break; await new Promise((r) => setTimeout(r, 1500)); }
     setTimeout(() => ov.remove(), 2500);
   }
   const map = await api("/api/resolve", { srcs: miss }); await loadMedia();
