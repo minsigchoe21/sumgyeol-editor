@@ -376,6 +376,36 @@ def veo_check(mid, text, prompt, checklist):
     for b in frames_b64(mid, 4): content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}})
     return claude(content, 1500, "veo_check")
 
+SCHEMAS_ARR = {"arrange": {"type": "object", "properties": {"plan": {"type": "array", "items": {"type": "object", "properties": {
+    "i": {"type": "integer"}, "clip": S_STR, "clip_in": {"type": "number"}, "why": S_STR}, "required": ["i", "clip"]}}, "notes": S_STR}, "required": ["plan"]}}
+def arrange(sentences, ids, topic):
+    """🎬 대본에 맞춰 영상 재배치(11-07): 고친 대본(문장)과 가진 영상·사진을 Claude가 직접 보고, 문장마다 가장 맞는 클립과 시작 초를 골라요."""
+    SCHEMAS.update(SCHEMAS_ARR)
+    vids = [i for i in ids if i in DB and DB[i]["kind"] in ("video", "image") and DB[i].get("status") == "ready"][:24]
+    if not vids: return {"error": "배치할 영상이 없어요"}
+    lines = "\n".join(f"{x['i']}. ({x['dur']:.1f}초) {x['text']}" for x in sentences)
+    content = [{"type": "text", "text": f"쇼츠 주제: {topic}\n아래는 확정된 대본(문장 번호, 길이, 대사)이에요:\n{lines}\n\n"
+                f"그리고 가진 클립 {len(vids)}개(영상은 앞·가운데·뒤 3장, 사진은 1장)예요. 문장마다 화면으로 가장 잘 맞는 클립과 그 클립에서 쓸 시작 초(clip_in, 영상만)를 골라 줘.\n"
+                "- 대사 내용과 보이는 장면이 맞게(해달 문장엔 해달, 성게 문장엔 성게, 범고래엔 범고래). 딱 맞는 게 없으면 분위기가 가장 가까운 것.\n"
+                "- 같은 클립을 바로 다음 문장에 또 쓰지 말고, 여러 번 쓸 땐 다른 구간(clip_in)을.\n"
+                "- clip_in + 문장 길이가 클립 길이를 넘지 않게(넘으면 0에 가깝게).\n"
+                "- 수족관·사람·글자가 보이는 장면은 되도록 피하고, notes에 한국어로 적어.\n모든 문장에 하나씩. answer 도구로 돌려줘."}]
+    for j, mid in enumerate(vids):
+        m = DB[mid]; cr = m.get("credit") or {}
+        kind_ko = "사진" if m["kind"] == "image" else f"{m['dur']:.1f}초 영상"
+        content.append({"type": "text", "text": f"C{j + 1}: {m['name']} ({kind_ko}) {cr.get('title') or ''}"})
+        if m["kind"] == "video":
+            for b in frames_b64(mid): content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}})
+        else:
+            import base64
+            try: content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(open(os.path.join(MED, mid, "thumb.jpg"), "rb").read()).decode()}})
+            except Exception: pass
+    r = claude(content, 4000, "arrange")
+    for x in r.get("plan", []):
+        try: x["media"] = vids[int(str(x.get("clip", "C1")).lstrip("Cc")) - 1]
+        except Exception: x["media"] = None
+    return r
+
 WONDER = ["bioluminescence", "murmuration starlings", "mimic octopus", "cuttlefish color change", "volcano lava flow", "aurora timelapse", "jellyfish swarm",
           "coral spawning", "humpback whale breach", "slime mold timelapse", "lightning storm slow motion", "glacier calving", "sardine run", "manta ray",
           "hummingbird slow motion", "mantis shrimp", "firefly synchronous", "sea otter", "chameleon tongue", "leafcutter ants", "geyser eruption", "sand dunes wind",
@@ -782,6 +812,8 @@ class H(BaseHTTPRequestHandler):
             except Exception as e: log(f"tts error {e}"); return self._json({"error": f"목소리 만들기 오류: {e}"}, 500)
         if p == "/api/tts/status":
             import tts_local; return self._json(tts_local.STATE)
+        if p == "/api/arrange":
+            j = self._body(); return self._json(arrange(j.get("sentences", []), j.get("ids", []), j.get("topic", "")))
         if p == "/api/describe": return self._json(describe(self._body().get("items", [])[:40]))
         if p == "/api/fetch_pexels":   # API 키 없이: Pexels 영상 주소/번호로 바로 받기(11-06 Pexels 새 키 발급 중단)
             j = self._body(); m = re.findall(r"(\d{5,})", j.get("url", ""))

@@ -644,7 +644,7 @@ function vAt(tt) { return P.clips.filter((c) => c.track === "V1" && tt >= c.star
 function renderSents() {
   const box = $("#sentList"); if (!box) return; const ss = sentClips();
   if (!ss.length) { box.innerHTML = '<p class="dim">글자 트랙에 문장이 없어요. 대본 추천이나 자막(.srt) 불러오기로 넣어 주세요.</p>'; return; }
-  const head = `<div class="row"><button id="btnVoiceAll">🔊 모든 문장 목소리 다시 만들기</button></div><div id="voiceState" class="dim" style="font-size:12px"></div>`;
+  const head = `<div class="row" style="flex-wrap:wrap"><button id="btnArrange">🎬 대본에 맞춰 영상 재배치</button><button id="btnVoiceAll">🔊 모든 문장 목소리 다시 만들기</button></div><div id="voiceState" class="dim" style="font-size:12px"></div>`;
   box.innerHTML = head + ss.map((c, i) => { const v = vAt(c.start + Math.min(0.5, c.dur / 2)); const th = v && MEDIA[v.media] ? (MEDIA[v.media].kind === "image" ? `/media/${v.media}/thumb.jpg` : `/media/${v.media}/thumb.jpg`) : "";
     return `<div class="srow" data-id="${c.id}"><div class="hdr"><b>${c.n || i + 1}</b> ${fmt(c.start)} · ${c.dur.toFixed(1)}초 <button data-act="go" title="이 문장으로 가서 재생">▶</button>${v?.ai ? ' <span style="color:#ff8a65">AI</span>' : ""}${th ? `<img src="${th}" title="지금 화면: ${MEDIA[v.media].name}">` : '<img alt="">'}</div>
     <textarea data-act="text">${(c.text || "").replace(/</g, "&lt;")}</textarea>
@@ -652,6 +652,7 @@ function renderSents() {
     <input class="memo" data-act="memo" placeholder="코멘트·요청(예: 해달이 털 고르는 클로즈업, 바다 위에서)" value="${(c.memo || "").replace(/"/g, "&quot;")}">
     <div class="btns"><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}<button data-act="ask" class="${c.veoAsk ? "on" : ""}" title="이 문장 Veo를 Claude에게 맡겨요(저장 후 채팅에 'Veo 맡겼어')">🤖 ${c.veoAsk ? "Claude에게 맡김 ✓" : "Claude에게 맡기기"}</button></div>
     <div class="res">${c.veo ? veoHtml(c.veo) : ""}</div></div>`; }).join("");
+  $("#btnArrange").onclick = arrangeAll;
   $("#btnVoiceAll").onclick = async () => { const all = sentClips(); for (let k = 0; k < all.length; k++) { $("#voiceState").textContent = `목소리 만드는 중 ${k + 1}/${all.length}…`; const ok = await sentVoice(all[k], true); if (!ok) break; } $("#voiceState").textContent = "다 만들었어요 ✓"; renderSents(); };
   box.querySelectorAll(".srow").forEach((row) => {
     const c = clipById(row.dataset.id);
@@ -683,6 +684,27 @@ function placeVoice(c, mid, dur) {
   c.dur = slot; c.voice = mid;
   P.clips.push({ id: uid(), track: "A1", kind: "audio", media: mid, src: MEDIA[mid].rel || MEDIA[mid].path, start: c.start, in: 0, dur, vol: 1, speed: 1, voiceOf: c.id });
   renderTL(); draw(); dirty();
+}
+// 🎬 대본에 맞춰 영상 재배치(11-07 "해달편 대본에 맞춰서 영상 재배치"): 이 편 폴더의 영상·사진 + 지금 타임라인의 클립을 Claude가 보고 문장마다 다시 붙여요
+async function arrangeAll() {
+  const ss = sentClips(); if (!ss.length) return; const st = $("#voiceState");
+  const f = "sources/" + projFolder() + "/";
+  const ids = [...new Set([...Object.values(MEDIA).filter((m) => (m.kind === "video" || m.kind === "image") && (m.rel || "").startsWith(f) && !(m.rel || "").includes("/voice/")).map((m) => m.id),
+                          ...P.clips.filter((c) => c.track === "V1" && MEDIA[c.media]).map((c) => c.media)])];
+  if (!ids.length) { alert("이 편 폴더에 영상이 없어요"); return; }
+  st.textContent = `Claude가 영상 ${ids.length}개를 보고 문장 ${ss.length}개에 맞추는 중(1~2분)…`;
+  const r = await api("/api/arrange", { topic: $("#topic").value || P.name, ids, sentences: ss.map((c, i) => ({ i: i + 1, text: c.text, dur: c.dur })) });
+  if (r.error || !r.plan) { st.textContent = r.error || "재배치를 못 했어요"; return; }
+  snap(); let n = 0;
+  for (const x of r.plan) {
+    const c = ss[(x.i || 0) - 1], m = MEDIA[x.media]; if (!c || !m) continue;
+    const isImg = m.kind === "image"; const cin = isImg ? 0 : Math.max(0, Math.min(+x.clip_in || 0, Math.max(0, m.dur - Math.min(c.dur, m.dur))));
+    const k = placeInRange(m.id, c.start, c.dur, isImg, { in: cin, why: x.why || "" });
+    if (!isImg) { k.dur = c.dur; k.speed = m.dur - cin < c.dur ? Math.max(0.5, +((m.dur - cin) / c.dur).toFixed(2)) : 1; } n++;
+  }
+  undoS.splice(undoS.length - n, n);   // 한 번의 되돌리기(Ctrl+Z)로 재배치 전체를 돌려요
+  renderTL(); draw(); dirty(); renderSents();
+  $("#voiceState").textContent = `문장 ${n}개에 영상을 다시 붙였어요 ✓ (Ctrl+Z로 되돌리기)` + (r.notes ? " · " + r.notes : "");
 }
 function veoHtml(v) {
   const esc = (x) => String(x ?? "").replace(/</g, "&lt;");
