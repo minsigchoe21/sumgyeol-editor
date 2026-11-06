@@ -26,10 +26,14 @@
     </div>
     <div id="tab-script" class="tab">
       <label>채널 <select id="chSel"></select></label>
-      <label>주제(비우면 추천) <input id="topic" placeholder="예: 해달은 왜 돌을 들고 다닐까"></label>
-      <label>문장 수 <input id="nSent" type="number" value="14" min="5" max="30"></label>
-      <button id="btnRec">대본 추천 받기</button>
+      <label>주제 <input id="topic" placeholder="예: 해달, 흰동가리, 스프링클러"></label>
+      <p class="dim" style="margin:10px 0 4px">영상 먼저 → 대본</p>
+      <div class="row"><input id="folder" placeholder="폴더(예: 지구_23_흰동가리)"><input id="nClip" type="number" value="12" min="4" max="30" title="모을 영상 수" style="max-width:60px"></div>
+      <button id="btnCollect">① 주제로 영상 모으기</button>
+      <div id="colState" class="dim" style="font-size:12px;margin:4px 0"></div>
+      <div class="row"><button id="btnFromMedia">② 이 영상들로 대본 추천</button><input id="nSent" type="number" value="14" min="5" max="30" title="문장 수" style="max-width:60px"></div>
       <div id="recOut"></div>
+      <details style="margin-top:12px"><summary class="dim">영상 없이 대본만 추천</summary><button id="btnRec" style="margin-top:6px">대본 추천 받기</button></details>
     </div>
     <div id="tab-find" class="tab">
       <div class="row"><input id="q" placeholder="검색어(영어), 예: sea otter"><select id="src"><option value="pexels">Pexels</option><option value="pixabay">Pixabay</option></select></div>

@@ -274,6 +274,56 @@ document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => {
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x.id === "tab-" + b.dataset.tab));
 }));
 let SCRIPT = null;
+// ---- 영상 먼저 → 대본 ----
+const chPrefix = () => ($("#chSel").value === "sobang" ? "소방_" : "지구_");
+$("#topic").addEventListener("change", () => { if (!$("#folder").value) $("#folder").value = chPrefix() + $("#topic").value.trim().replace(/\s+/g, ""); });
+const folderOf = () => ($("#folder").value.trim() || chPrefix() + $("#topic").value.trim().replace(/\s+/g, ""));
+$("#btnCollect").onclick = async () => {
+  if (!$("#topic").value.trim()) { alert("주제를 먼저 적어 주세요"); return; }
+  const folder = folderOf(); $("#folder").value = folder;
+  await api("/api/collect", { channel: $("#chSel").value, topic: $("#topic").value, n: +$("#nClip").value, orient: P.h > P.w ? "portrait" : "", folder });
+  const tick = async () => { const st = await api("/api/collect/status", { folder }); $("#colState").textContent = (st.state || "") + (st.keywords ? " · 검색어: " + st.keywords.join(", ") : ""); await loadMedia(); if (!st.done) setTimeout(tick, 2000); };
+  tick();
+};
+function folderMedia() {
+  const f = "sources/" + folderOf() + "/";
+  let ids = Object.values(MEDIA).filter((m) => m.kind === "video" && (m.rel || "").startsWith(f)).map((m) => m.id);
+  if (!ids.length) ids = Object.values(MEDIA).filter((m) => m.kind === "video").map((m) => m.id);
+  return ids;
+}
+$("#btnFromMedia").onclick = async () => {
+  const ids = folderMedia(); if (!ids.length) { alert("영상이 없어요. ①로 모으거나 미디어 탭에서 가져오세요."); return; }
+  if (Object.values(MEDIA).some((m) => m.status === "working")) { alert("영상 준비가 아직 안 끝났어요. 썸네일이 다 뜬 뒤 눌러 주세요."); return; }
+  $("#recOut").innerHTML = `<p class="dim">영상 ${ids.length}개를 보고 대본을 쓰는 중이에요(1~2분)…</p>`;
+  const r = await api("/api/script_from_media", { channel: $("#chSel").value, topic: $("#topic").value, ids, n: +$("#nSent").value });
+  if (r.error) { $("#recOut").innerHTML = `<p style="color:#ff8a65">${r.error}</p>`; return; }
+  SCRIPT = { script: r }; showMediaScript();
+};
+const estDur = (ko) => Math.max(2.2, (ko || "").replace(/[\s,.?!]/g, "").length / 6.3 + 0.5);   // 8번 목소리 대략 속도
+function showMediaScript() {
+  const r = SCRIPT.script; const th = (id) => (id && MEDIA[id] ? `<img src="/media/${id}/thumb.jpg" style="width:56px;height:56px;object-fit:cover;border-radius:4px;float:right;margin-left:6px">` : "");
+  let h = `<p><b>${r.title || ""}</b><br><span class="dim">${r.hook || ""}</span></p>`;
+  h += `<div class="row"><button id="btnPlace">타임라인에 배치</button><button id="btnSaveSc">대본 저장</button></div>`;
+  if (r.clips_note?.length) h += `<details><summary class="dim">영상 메모</summary>${r.clips_note.map((c) => `<div class="sent">${th(c.media)}<b>${c.clip}</b> ${c.what || ""}${c.species_ok === false ? ' <span style="color:#ff8a65">· 다른 종</span>' : ""}</div>`).join("")}</details>`;
+  h += r.sentences.map((x, i) => `<div class="sent">${th(x.media)}<div class="ko">${i + 1}. ${x.ko}</div><div class="en">${x.en || ""}</div><div class="en">화면 ${x.clip || "?"} ${x.clip_in ?? 0}초 · 근거: ${x.fact_source || "?"}</div></div>`).join("");
+  $("#recOut").innerHTML = h;
+  $("#btnPlace").onclick = placeScript;
+  $("#btnSaveSc").onclick = async () => { const a = await api("/api/save_script", { folder: folderOf(), script: r }); $("#btnSaveSc").textContent = a.ok ? "저장됨 ✓" : "실패"; };
+}
+function placeScript() {
+  // 내레이션이 아직 없으니 글자 수로 문장 길이를 어림해서 자막(T1)과 영상(V1)을 나란히 놓아요. 내레이션을 만들면 실제 시간으로 다시 맞춰요.
+  snap(); const r = SCRIPT.script; let s0 = 0;
+  P.clips = P.clips.filter((c) => !(c.fromScript));
+  r.sentences.forEach((x, i) => {
+    const d = estDur(x.ko);
+    P.clips.push({ id: uid(), track: "T1", kind: "text", fromScript: true, start: s0, in: 0, dur: d, text: x.ko, en: x.en, size: 52, color: "#ffffff", y: 0.7, stroke: 7, n: i + 1 });
+    const m = MEDIA[x.media];
+    if (m) { const cin = Math.max(0, Math.min(+x.clip_in || 0, Math.max(0, m.dur - 0.5))); P.clips.push({ id: uid(), track: "V1", kind: "video", fromScript: true, media: m.id, src: m.rel || m.path, start: s0, in: cin, dur: Math.min(d, m.dur - cin), vol: 0, fit: "cover", zoom: 1, x: 0.5, y: 0.5, speed: 1 }); }
+    s0 += d;
+  });
+  if (!$("#projName").value || $("#projName").value === "새 프로젝트") $("#projName").value = folderOf();
+  renderTL(); draw(); dirty();
+}
 $("#btnRec").onclick = async () => {
   $("#recOut").innerHTML = '<p class="dim">대본을 만드는 중이에요(30초~1분)…</p>';
   const r = await api("/api/recommend", { channel: $("#chSel").value, topic: $("#topic").value, n: +$("#nSent").value });

@@ -137,6 +137,21 @@ SCRIPT_FMT = """답은 JSON 하나만:
  "script":{"title":"고른 주제","sentences":[{"ko":"한국어 대사","en":"English subtitle","search":["pexels 검색어(영어) 1~3개"],"fact_source":"근거(기관·매체·연도)"}]}}
 ideas는 3개, script는 그중 첫 번째로. 검색어는 무료 실사 영상(Pexels/Pixabay)에서 실제로 찾을 수 있는 구체적인 장면으로."""
 
+def claude(content, max_tokens=6000):
+    k = keys()
+    if not k.get("anthropic"): return {"error": f"Claude API 키가 없어요. {KEYF} 파일에 \"anthropic\" 키를 적어 주세요(사용법은 README)."}
+    try:
+        r = http_json("https://api.anthropic.com/v1/messages",
+                      {"x-api-key": k["anthropic"], "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                      {"model": k.get("model", "claude-sonnet-5-5"), "max_tokens": max_tokens, "messages": [{"role": "user", "content": content}]}, timeout=300)
+        txt = "".join(b.get("text", "") for b in r.get("content", []))
+        m = re.search(r"\{.*\}", txt, re.S)
+        return json.loads(m.group(0)) if m else {"error": "답을 못 읽었어요", "raw": txt[:2000]}
+    except urllib.error.HTTPError as e:
+        return {"error": f"Claude API 오류 {e.code}: {e.read().decode()[:300]}"}
+    except Exception as e:
+        return {"error": f"Claude API 오류: {e}"}
+
 def recommend(channel, topic, n_sent):
     k = keys()
     if not k.get("anthropic"): return {"error": f"Claude API 키가 없어요. {KEYF} 파일에 \"anthropic\" 키를 적어 주세요(사용법은 README)."}
@@ -179,19 +194,88 @@ def search(q, source, orient):
         return {"error": f"검색 오류: {e}"}
     return {"items": out}
 
-def fetch(item):
-    """고른 영상을 받아 미디어로 가져오고, 출처를 credits.json에 적어요."""
-    name = f"{item['source']}_{item['id']}.mp4"; dst = os.path.join(DL, name)
+def fetch(item, folder=None):
+    """고른 영상을 받아 미디어로 가져오고, 출처를 credits.json에 적어요. folder = sources 안 편 폴더 이름."""
+    d = os.path.join(SOURCES, folder) if folder else DL; os.makedirs(d, exist_ok=True)
+    name = f"{item['source']}_{item['id']}.mp4"; dst = os.path.join(d, name)
     if not os.path.exists(dst):
         req = urllib.request.Request(item["dl"], headers={"User-Agent": "Mozilla/5.0 (sumgyeol-editor)"})
         with urllib.request.urlopen(req, timeout=600) as r, open(dst + ".part", "wb") as f: shutil.copyfileobj(r, f, 1 << 20)
         os.replace(dst + ".part", dst)
-    cr = json.load(open(CREDF, encoding="utf-8")) if os.path.exists(CREDF) else {}
+    cf = os.path.join(d, "credits.json")
+    cr = json.load(open(cf, encoding="utf-8")) if os.path.exists(cf) else {}
     cr[name] = {k_: item.get(k_) for k_ in ("source", "id", "page", "author", "license")}
-    json.dump(cr, open(CREDF, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    json.dump(cr, open(cf, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     ids = import_paths([dst])
     for i in ids: DB[i]["credit"] = cr[name]
     save_db(); return ids
+
+# ---------------------------------------------------------------- 영상 먼저 → 대본 (11-06 "영상을 찾아서 - 대본을 추천하는 방식으로") ----
+COLLECT = {}   # 진행 상황
+def collect(channel, topic, n, orient, folder):
+    """① 주제로 검색어를 만들고(Claude, 키 없으면 주제 그대로) Pexels/Pixabay에서 영상을 모아 sources\\<folder>\\ 에 받아요."""
+    COLLECT[folder] = {"state": "검색어 만드는 중", "ids": [], "done": False}
+    kws = [topic]
+    ch = next((c for c in channels() if c["id"] == channel), {"name": channel, "rules": ""})
+    r = claude(f"채널 {ch['name']}의 쇼츠 주제: {topic}\n이 주제의 쇼츠에 쓸 무료 실사 영상(Pexels·Pixabay)을 찾을 영어 검색어 8개를 만들어 줘. "
+               "주인공 동물·장소·행동·관련 생물·환경을 고르게, 실제로 영상이 있을 법한 구체적인 말로. 답은 JSON 하나만: {\"keywords\":[\"...\"]}", 800)
+    if r.get("keywords"): kws = r["keywords"][:8]
+    COLLECT[folder]["keywords"] = kws
+    per = max(1, -(-n // len(kws))); got = set(); k = keys()
+    for kw in kws:
+        for src in ("pexels", "pixabay"):
+            if not k.get(src): continue
+            COLLECT[folder]["state"] = f"찾는 중: {kw} ({src})"
+            res = search(kw, src, orient).get("items", []) or search(kw, src, "").get("items", [])
+            c = 0
+            for it in res:
+                if c >= per or len(COLLECT[folder]["ids"]) >= n: break
+                key = it["source"] + it["id"]
+                if key in got or (it.get("dur") or 0) < 4: continue
+                got.add(key); COLLECT[folder]["state"] = f"받는 중 {len(COLLECT[folder]['ids']) + 1}/{n}: {kw}"
+                try: COLLECT[folder]["ids"] += fetch(it, folder); c += 1
+                except Exception: pass
+            break   # 한 검색어당 첫 번째로 되는 사이트만
+    COLLECT[folder].update(state=f"다 모았어요({len(COLLECT[folder]['ids'])}개)", done=True)
+
+def frames_b64(mid, k=3):
+    """클립에서 k장 뽑아 base64 JPEG(가로 320)."""
+    import base64, tempfile
+    m = DB[mid]; src = os.path.join(MED, mid, "proxy.mp4"); out = []
+    for i in range(k):
+        t = m["dur"] * (i + 1) / (k + 1)
+        fd, tmp = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
+        run(["-ss", f"{t:.2f}", "-i", src, "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "5", tmp])
+        try: out.append(base64.b64encode(open(tmp, "rb").read()).decode())
+        except Exception: pass
+        os.remove(tmp)
+    return out
+
+def script_from_media(channel, topic, ids, n_sent):
+    """② 모은 영상의 장면을 Claude가 직접 보고, 그 영상들로 보여 줄 수 있는 대본을 문장마다 클립을 붙여 추천해요."""
+    ch = next((c for c in channels() if c["id"] == channel), None)
+    if not ch: return {"error": "채널을 못 찾았어요"}
+    vids = [i for i in ids if i in DB and DB[i]["kind"] == "video" and DB[i].get("status") == "ready"][:20]
+    if not vids: return {"error": "대본을 만들 영상이 없어요. 먼저 영상을 모으거나 가져오세요."}
+    content = [{"type": "text", "text": f"채널: {ch['name']}\n채널 규칙:\n{ch['rules']}\n\n주제: {topic or '(영상을 보고 가장 좋은 주제를 골라 줘)'}\n"
+                f"아래 영상 클립 {len(vids)}개(각 3장, 앞·가운데·뒤)를 보고, 이 영상들로 화면을 채울 수 있는 쇼츠 대본을 약 {n_sent}문장으로 써 줘.\n"
+                "- 문장마다 가장 잘 맞는 클립 번호(C1…)와 그 클립에서 쓸 시작 초(clip_in)를 골라. 같은 클립을 여러 번 써도 되지만 연달아 쓰지는 마.\n"
+                "- 영상에 보이는 것과 대사가 어긋나지 않게. 영상 속 동물이 주제와 다른 종이면 그렇다고 clips_note에 적어.\n"
+                "- 사실은 널리 확인된 것만, 문장마다 근거(기관·논문·연도)를 적고, 확실하지 않으면 fact_source에 '확인 필요'.\n"
+                '답은 JSON 하나만: {"title":"","hook":"","clips_note":[{"clip":"C1","what":"보이는 것 한 줄","species_ok":true}],'
+                '"sentences":[{"ko":"한국어 대사","en":"English subtitle","clip":"C1","clip_in":0.0,"fact_source":""}]}'}]
+    for j, mid in enumerate(vids):
+        content.append({"type": "text", "text": f"C{j + 1}: {DB[mid]['name']} ({DB[mid]['dur']:.1f}초)"})
+        for b in frames_b64(mid): content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}})
+    r = claude(content, 8000)
+    if r.get("sentences"):
+        for x in r["sentences"]:
+            try: x["media"] = vids[int(str(x.get("clip", "C1")).lstrip("Cc")) - 1]
+            except Exception: x["media"] = None
+        for x in r.get("clips_note", []):
+            try: x["media"] = vids[int(str(x.get("clip", "C1")).lstrip("Cc")) - 1]
+            except Exception: pass
+    return r
 
 SAFE = re.compile(r"[^0-9A-Za-z가-힣_\-. ]")
 def proj_path(name): return os.path.join(PROJ, SAFE.sub("_", name).strip() or "제목없음") + ".shum"
@@ -270,6 +354,19 @@ class H(BaseHTTPRequestHandler):
             try: apply_update()
             except Exception as e: return self._json({"error": f"업데이트 실패: {e}"}, 500)
             self._json({"ok": True, "version": local_version()}); threading.Thread(target=restart, daemon=True).start(); return
+        if p == "/api/collect":
+            j = self._body(); folder = SAFE.sub("_", j.get("folder") or j.get("topic", "새주제")).strip()
+            if COLLECT.get(folder, {}).get("done") is False: return self._json({"folder": folder, "busy": True})
+            threading.Thread(target=collect, args=(j.get("channel", "jigu"), j.get("topic", ""), int(j.get("n", 12)), j.get("orient", ""), folder), daemon=True).start()
+            return self._json({"folder": folder})
+        if p == "/api/save_script":   # 대본을 sources\<folder>\대본.json·대본.txt로 저장(Claude가 내레이션 만들 때 읽어요)
+            j = self._body(); folder = SAFE.sub("_", j.get("folder", "새주제")).strip(); d = os.path.join(SOURCES, folder); os.makedirs(d, exist_ok=True)
+            sc = j.get("script", {}); json.dump(sc, open(os.path.join(d, "대본.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            lines = [sc.get("title", "")] + [f"{i + 1}. {x.get('ko', '')}\n   EN: {x.get('en', '')}\n   화면: {x.get('clip', '')} {x.get('clip_in', 0)}초 / 근거: {x.get('fact_source', '')}" for i, x in enumerate(sc.get("sentences", []))]
+            open(os.path.join(d, "대본.txt"), "w", encoding="utf-8").write("\n".join(lines)); return self._json({"ok": True, "path": d})
+        if p == "/api/collect/status": j = self._body(); return self._json(COLLECT.get(j.get("folder"), {}))
+        if p == "/api/script_from_media":
+            j = self._body(); return self._json(script_from_media(j.get("channel"), j.get("topic", ""), j.get("ids", []), int(j.get("n", 14))))
         if p == "/api/recommend":
             j = self._body(); return self._json(recommend(j.get("channel"), j.get("topic", ""), int(j.get("n", 14))))
         if p == "/api/search":
