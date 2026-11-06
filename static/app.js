@@ -115,7 +115,11 @@ $("#zoom").oninput = (e) => { pps = +e.target.value; renderTL(); };
 function placeHead() { $("#playhead").style.left = t * pps + "px"; $("#tc").textContent = fmt(t); }
 
 // ------------------------------------------------------------ 편집 동작 ----
-function splitAt() {
+function splitAt() {   // 재생선에서 나누기: 고른 클립, 없으면 재생선 위의 모든 트랙 클립
+  const at = t, cs = clipById(sel) && at > clipById(sel).start + 0.03 && at < clipById(sel).start + clipById(sel).dur - 0.03 ? [clipById(sel)] : P.clips.filter((x) => at > x.start + 0.03 && at < x.start + x.dur - 0.03);
+  if (!cs.length) return; snap(); let last = null; cs.forEach((c) => (last = splitAtRaw(c, at))); sel = last?.id || sel; renderTL(); renderInsp(); draw();
+}
+function splitAtOld() {
   const c = clipById(sel) || P.clips.find((c) => c.track !== "A1" && t > c.start && t < c.start + c.dur); if (!c || !(t > c.start + 0.05 && t < c.start + c.dur - 0.05)) return;
   snap(); const k = t - c.start, n = { ...c, id: uid(), start: t, in: c.in + k * (c.speed || 1), dur: c.dur - k }; c.dur = k; P.clips.push(n); sel = n.id; renderTL(); renderInsp();
 }
@@ -129,8 +133,42 @@ function crossfade(c, d) {   // 앞 클립 끝과 d초 겹치게: 가능하면 �
   c.fadeIn = d;
 }
 function crossfadeAll() { snap(); const v = P.clips.filter((c) => c.track === "V1").sort((a, b) => a.start - b.start); v.slice(1).forEach((c) => crossfade(c, 0.5)); if (v[0]) v[0].fadeIn = 0.4; if (v.length) v[v.length - 1].fadeOut = 0.6; renderTL(); renderInsp(); draw(); }
+// ---- 잘라내기·복사·붙이기·이어 붙이기(11-06 "프리미어처럼") ----
+let CLIP = null;   // 클립보드
+function copySel() { const c = clipById(sel); if (c) { CLIP = JSON.parse(JSON.stringify(c)); flash("복사했어요"); } }
+function cutSel() { const c = clipById(sel); if (!c) return; copySel(); rippleDel(); flash("잘라냈어요(뒤 클립을 당겼어요)"); }
+function shiftAfter(track, at, d, exceptId) { P.clips.forEach((x) => { if (x.track === track && x.id !== exceptId && x.start >= at - 1e-6) x.start += d; }); }
+function pasteAt(overwrite) {   // 기본: 재생선 자리에 끼워 넣고 뒤를 밀어요(이어 붙이기). Shift = 덮어쓰기
+  if (!CLIP) return; snap(); const n = { ...JSON.parse(JSON.stringify(CLIP)), id: uid(), start: t };
+  if (!overwrite) { const cut = P.clips.find((x) => x.track === n.track && t > x.start + 0.01 && t < x.start + x.dur - 0.01); if (cut) { sel = cut.id; splitAtRaw(cut, t); } shiftAfter(n.track, t, n.dur, null); }
+  else { P.clips = P.clips.filter((x) => !(x.track === n.track && x.start >= t && x.start + x.dur <= t + n.dur)); }
+  P.clips.push(n); sel = n.id; seek(t + n.dur); renderTL(); renderInsp(); draw();
+}
+function dupSel() { const c = clipById(sel); if (!c) return; CLIP = JSON.parse(JSON.stringify(c)); const keep = t; t = c.start + c.dur; pasteAt(false); }
+function rippleDel() {   // 지우고 뒤 클립을 당겨 빈틈 없애기(Shift+Delete)
+  const c = clipById(sel); if (!c) return; snap(); P.clips = P.clips.filter((x) => x.id !== c.id); shiftAfter(c.track, c.start + c.dur, -c.dur, null); sel = null; renderTL(); renderInsp(); draw();
+}
+function rippleTrim(which) {   // Q: 재생선 앞부분 잘라내고 당기기, W: 재생선 뒷부분 잘라내기(+당기기)
+  const c = clipById(sel)?.track === "V1" && t > clipById(sel).start && t < clipById(sel).start + clipById(sel).dur ? clipById(sel) : P.clips.find((x) => x.track === "V1" && t > x.start && t < x.start + x.dur);
+  if (!c) return; snap(); const k = t - c.start;
+  if (which === "start") { c.in += k * (c.speed || 1); c.dur -= k; shiftAfter(c.track, c.start + 1e-3, -k, null); c.start = Math.max(0, c.start); seek(c.start); }
+  else { const cut = c.dur - k; c.dur = k; shiftAfter(c.track, c.start + k + cut - 1e-3, -cut, c.id); }
+  renderTL(); renderInsp(); draw();
+}
+function closeGaps() {   // 영상 트랙 빈틈 모두 없애기
+  snap(); let s0 = 0; P.clips.filter((x) => x.track === "V1").sort((a, b) => a.start - b.start).forEach((x) => { const ov = x.fadeIn && x.start < s0 ? Math.min(x.fadeIn, s0 - x.start) : 0; x.start = Math.max(0, s0 - ov); s0 = x.start + x.dur; }); renderTL(); draw(); flash("빈틈을 없앴어요");
+}
+function splitAtRaw(c, at) { const k = at - c.start, n = { ...c, id: uid(), start: at, in: c.in + k * (c.speed || 1), dur: c.dur - k, fadeIn: 0 }; c.dur = k; c.fadeOut = 0; P.clips.push(n); return n; }
+function setSpeed(c, v) {   // 슬로모션·빠르게: 원본 구간은 그대로 두고 길이가 바뀌어요
+  snap(); const old = c.speed || 1, d0 = c.dur, end0 = c.start + c.dur; c.dur = c.dur * old / v; c.speed = v; const m = MEDIA[c.media]; if (m) c.dur = Math.min(c.dur, (m.dur - c.in) / v);
+  shiftAfter(c.track, end0 - 1e-3, c.dur - d0, c.id);   // 뒤 클립을 같이 밀거나 당겨요
+  renderTL(); renderInsp(); draw();
+}
+function setZoomAnim(c, z1, z2) { snap(); c.zoom = z1; c.zoomEnd = z2; c.xEnd = c.x ?? 0.5; c.yEnd = c.y ?? 0.5; renderTL(); renderInsp(); draw(); }
+function flash(msg) { const d = document.createElement("div"); d.id = "updOv"; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 1200); }
 function delSel() { if (!sel) return; snap(); P.clips = P.clips.filter((c) => c.id !== sel); sel = null; renderTL(); renderInsp(); draw(); }
 function addText() { snap(); const c = { id: uid(), track: "T1", kind: "text", start: t, in: 0, dur: 3, text: "글자를 입력하세요", size: 64, color: "#ffffff", y: 0.68, stroke: 8 }; P.clips.push(c); sel = c.id; renderTL(); renderInsp(); draw(); }
+$("#btnGap").onclick = closeGaps; $("#btnCut").onclick = cutSel; $("#btnCopy").onclick = copySel; $("#btnPaste").onclick = () => pasteAt(false);
 $("#btnXfAll").onclick = crossfadeAll; $("#btnSplit").onclick = splitAt; $("#btnDel").onclick = delSel; $("#btnText").onclick = addText; $("#btnUndo").onclick = undo; $("#btnRedo").onclick = redo;
 
 // ------------------------------------------------------------ 속성 ----
@@ -146,10 +184,14 @@ function renderInsp() {
   if (c.kind === "text") h += `<label>글자<textarea data-k="text">${c.text || ""}</textarea></label>` + f("size", "크기", "number", 1) + f("color", "색", "color", 1) + f("y", "세로 위치", "range", 0.01, 'min="0" max="1"') + f("stroke", "외곽선 두께", "number", 1);
   h += `<div class="row" style="gap:6px">${f("fadeIn", "서서히 나타나기(초)", "number", 0.1, 'min="0" max="5"')}${f("fadeOut", "서서히 사라지기(초)", "number", 0.1, 'min="0" max="5"')}</div>`;
   if (c.track === "V1") h += `<div class="row"><button id="btnXf">앞 영상과 겹쳐 바뀌기(0.5초)</button></div>`;
+  if (c.kind === "video" || c.kind === "audio") h += `<p class="dim" style="margin:10px 0 2px;font-size:12px">속도</p><div class="row" style="flex-wrap:wrap">${[0.25, 0.5, 0.75, 1, 1.5, 2, 4].map((v) => `<button data-sp="${v}" class="${(c.speed || 1) === v ? "on" : ""}" style="padding:3px 7px">${v === 1 ? "보통" : v < 1 ? "슬로 " + v + "×" : v + "× 빠르게"}</button>`).join("")}</div>`;
+  if (c.kind === "video" || c.kind === "image") h += `<p class="dim" style="margin:10px 0 2px;font-size:12px">줌(클립 처음→끝)</p><div class="row" style="flex-wrap:wrap"><button data-zm="1,1.3">줌인</button><button data-zm="1.3,1">줌아웃</button><button data-zm="1,1.6">크게 줌인</button><button data-zm="off">줌 없음</button></div>` + (c.zoomEnd != null ? f("zoomEnd", "끝 확대", "range", 0.01, 'min="1" max="3"') + f("xEnd", "끝 가로 위치", "range", 0.01, 'min="0" max="1"') + f("yEnd", "끝 세로 위치", "range", 0.01, 'min="0" max="1"') : "");
   if (c.kind === "video" && c.media) h += `<div class="row"><button id="btnSim">🔗 이어 붙일 비슷한 영상 찾기</button></div>`;
   if (MEDIA[c.media]?.credit) { const cr = MEDIA[c.media].credit; h += `<p class="dim" style="font-size:11px">출처: ${cr.source} · ${cr.author} · ${cr.license}<br><a href="${cr.page}" target="_blank" style="color:#7fd0ff">${cr.page}</a></p>`; }
   box.innerHTML = h;
   const bs = $("#btnSim"); if (bs) bs.onclick = () => findSimilar(c.media);
+  box.querySelectorAll("[data-sp]").forEach((b) => (b.onclick = () => setSpeed(c, +b.dataset.sp)));
+  box.querySelectorAll("[data-zm]").forEach((b) => (b.onclick = () => { if (b.dataset.zm === "off") { snap(); delete c.zoomEnd; c.zoom = 1; renderInsp(); draw(); } else { const [a, z] = b.dataset.zm.split(",").map(Number); setZoomAnim(c, a, z); } }));
   const bx = $("#btnXf"); if (bx) bx.onclick = () => { snap(); crossfade(c, 0.5); renderTL(); renderInsp(); draw(); };
   box.querySelectorAll("[data-k]").forEach((el) => {
     el.addEventListener("focus", () => (el._b = JSON.stringify(P)));
@@ -184,8 +226,12 @@ function fadeA(c, tt) {
 const active = (tt) => P.clips.filter((c) => tt >= c.start && tt < c.start + c.dur);
 function drawMedia(c, e) {
   const iw = e.videoWidth || e.naturalWidth, ih = e.videoHeight || e.naturalHeight; if (!iw) return;
-  const s = (c.fit === "contain" ? Math.min(P.w / iw, P.h / ih) : Math.max(P.w / iw, P.h / ih)) * (c.zoom || 1);
-  const w = iw * s, h = ih * s; const x = (P.w - w) * (c.x ?? 0.5), y = (P.h - h) * (c.y ?? 0.5);
+  // 줌인·줌아웃(시작→끝 확대, 위치도 같이 움직임). 부드럽게(사인 곡선)
+  const u = c.zoomEnd != null ? Math.max(0, Math.min(1, (t - c.start) / Math.max(0.01, c.dur))) : 0, ee = 0.5 - Math.cos(Math.PI * u) / 2;
+  const lerp = (a, b) => a + (b - a) * ee;
+  const zz = c.zoomEnd != null ? lerp(c.zoom || 1, c.zoomEnd) : (c.zoom || 1), xx = c.zoomEnd != null ? lerp(c.x ?? 0.5, c.xEnd ?? c.x ?? 0.5) : (c.x ?? 0.5), yy = c.zoomEnd != null ? lerp(c.y ?? 0.5, c.yEnd ?? c.y ?? 0.5) : (c.y ?? 0.5);
+  const s = (c.fit === "contain" ? Math.min(P.w / iw, P.h / ih) : Math.max(P.w / iw, P.h / ih)) * zz;
+  const w = iw * s, h = ih * s; const x = (P.w - w) * xx, y = (P.h - h) * yy;
   g.drawImage(e, x, y, w, h);
 }
 function drawText(c) {
@@ -233,16 +279,32 @@ requestAnimationFrame(loop);
 // ------------------------------------------------------------ 키보드 ----
 addEventListener("keydown", (e) => {
   if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+  const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+  if (mod) {   // 프리미어와 같은 단축키
+    if (k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+    else if (k === "y") { e.preventDefault(); redo(); }
+    else if (k === "s") { e.preventDefault(); save(); }
+    else if (k === "c") { e.preventDefault(); copySel(); }
+    else if (k === "x") { e.preventDefault(); cutSel(); }
+    else if (k === "v") { e.preventDefault(); pasteAt(e.shiftKey); }
+    else if (k === "k") { e.preventDefault(); splitAt(); }
+    else if (k === "d") { e.preventDefault(); dupSel(); }
+    return;
+  }
   if (e.code === "Space") { e.preventDefault(); togglePlay(); }
-  else if (e.key === "s" || e.key === "S") splitAt();
-  else if (e.key === "t" || e.key === "T") addText();
-  else if (e.key === "Delete" || e.key === "Backspace") delSel();
-  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
-  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
-  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save(); }
+  else if (k === "s" || k === "c") splitAt();
+  else if (k === "t") addText();
+  else if (k === "q") rippleTrim("start");
+  else if (k === "w") rippleTrim("end");
+  else if (e.key === "Delete" || e.key === "Backspace") e.shiftKey ? rippleDel() : delSel();
   else if (e.key === "ArrowLeft") seek(t - (e.shiftKey ? 1 : 1 / P.fps));
   else if (e.key === "ArrowRight") seek(t + (e.shiftKey ? 1 : 1 / P.fps));
+  else if (e.key === "ArrowUp") { const e2 = edges(null).filter((x) => x < t - 0.01).sort((a, b) => b - a)[0]; seek(e2 ?? 0); }
+  else if (e.key === "ArrowDown") { const e2 = edges(null).filter((x) => x > t + 0.01).sort((a, b) => a - b)[0]; if (e2 != null) seek(e2); }
   else if (e.key === "Home") seek(0);
+  else if (e.key === "End") seek(projDur());
+  else if (k === "=" || k === "+") { pps = Math.min(300, pps * 1.25); $("#zoom").value = pps; renderTL(); }
+  else if (k === "-") { pps = Math.max(10, pps / 1.25); $("#zoom").value = pps; renderTL(); }
 });
 
 // ------------------------------------------------------------ 프로젝트 ----

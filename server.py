@@ -598,16 +598,13 @@ def apply_update():
     sb, nb = os.path.join(ROOT, "START.bat"), os.path.join(ROOT, "START.new.bat")
     if os.path.exists(nb) and os.path.exists(sb) and open(sb, "rb").read() == open(nb, "rb").read(): os.remove(nb)
 RESTART = False
-def restart():   # 응답을 보낸 뒤 serve_forever를 멈추고, 메인 스레드가 새 버전으로 다시 켜요
+def restart():   # 응답을 보낸 뒤 서버를 멈추고 종료 코드 3으로 나가요 → 감독 프로세스가 새 코드로 다시 켜요
     global RESTART
     time.sleep(0.5); RESTART = True; SERVER.shutdown()
-def relaunch():
-    print("[업데이트] 새 버전으로 다시 켜요…", local_version(), flush=True)
-    SERVER.server_close()
-    args = [a for a in sys.argv if a != "--no-browser"] + ["--no-browser"]
-    if os.name == "nt":   # Windows: 같은 창에서 새 프로세스를 띄우고 기다림(창을 닫으면 같이 꺼짐)
-        raise SystemExit(subprocess.call([sys.executable] + args, cwd=ROOT))
-    os.execv(sys.executable, [sys.executable] + args)
+LOGF = os.path.join(DATA, "server.log")
+def log(msg):
+    try: open(LOGF, "a", encoding="utf-8").write(time.strftime("%m-%d %H:%M:%S ") + msg + "\n")
+    except Exception: pass
 
 def serve():
     global SERVER
@@ -617,12 +614,34 @@ def serve():
     else: raise SystemExit("포트 %d을 쓸 수 없어요. 편집기가 이미 켜져 있는지 확인하세요." % PORT)
     return SERVER
 
-if __name__ == "__main__":
-    for m in DB.values():   # 끊겼던 작업 다시
-        if m.get("status") == "working": threading.Thread(target=make_assets, args=(m["id"],), daemon=True).start()
-    s = serve()
-    url = f"http://localhost:{PORT}"; print("숨결 편집기:", url, local_version(), "(이 창을 닫으면 꺼져요)")
-    if "--no-browser" not in sys.argv: threading.Timer(0.8, lambda: webbrowser.open(url)).start()
-    try: s.serve_forever()
+def supervise():
+    """START.bat이 켜는 바깥 프로세스: 실제 서버(--child)를 띄우고, 업데이트로 코드 3을 내며 끝나면 새 코드로 다시 띄워요(11-06 업데이트 뒤 꺼지던 문제)."""
+    first = True
+    while True:
+        args = [sys.executable, os.path.join(ROOT, "server.py"), "--child"] + ([] if first and "--no-browser" not in sys.argv else ["--no-browser"])
+        rc = subprocess.call(args, cwd=ROOT); first = False
+        if rc == 3: print("[업데이트] 새 버전으로 다시 켜요…", flush=True); log("restart after update"); time.sleep(0.3); continue
+        if rc not in (0, None):
+            log(f"child exited {rc}"); print(f"[!] 편집기가 멈췄어요(코드 {rc}). 3초 뒤 다시 켜요. 계속 반복되면 {LOGF} 를 보내 주세요.", flush=True)
+            time.sleep(3); continue
+        break
+
+if __name__ == "__main__" and "--child" not in sys.argv:
+    try: supervise()
     except KeyboardInterrupt: pass
-    if RESTART: relaunch()
+    raise SystemExit(0)
+
+if __name__ == "__main__":
+    import traceback
+    try:
+        for m in DB.values():   # 끊겼던 작업 다시
+            if m.get("status") == "working": threading.Thread(target=make_assets, args=(m["id"],), daemon=True).start()
+        s = serve()
+        url = f"http://localhost:{PORT}"; print("숨결 편집기:", url, local_version(), "(이 창을 닫으면 꺼져요)", flush=True)
+        if "--no-browser" not in sys.argv: threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        try: s.serve_forever()
+        except KeyboardInterrupt: pass
+        if RESTART: s.server_close(); raise SystemExit(3)
+    except SystemExit: raise
+    except Exception:
+        log(traceback.format_exc()); traceback.print_exc(); raise SystemExit(1)
