@@ -17,7 +17,7 @@ try {
   $src = Get-ChildItem $tmp -Directory | Select-Object -First 1
   Get-ChildItem $src.FullName -Recurse -File | ForEach-Object {
     $rel = $_.FullName.Substring($src.FullName.Length + 1)
-    if ($rel -like 'projects*') { return }
+    if ($rel -like 'projects*' -or $rel -like 'inbox*') { return }
     $dst = Join-Path $here $rel
     if ($rel -eq 'START.bat') { $dst = Join-Path $here 'START.new.bat' }   # 실행 중인 START.bat은 덮어쓰지 않음
     New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null

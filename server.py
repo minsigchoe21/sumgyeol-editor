@@ -622,7 +622,7 @@ def apply_update():
     for n in z.namelist():
         if n.endswith("/"): continue
         rel = n[len(top) + 1:]
-        if not rel or rel.startswith("projects/"): continue
+        if not rel or rel.startswith("projects/") or rel.startswith("inbox/"): continue   # inbox = Claude 초안 재료(편집기 폴더에 안 넣음)
         dst = os.path.join(ROOT, *rel.split("/"))
         if rel == "START.bat": dst = os.path.join(ROOT, "START.new.bat")   # 실행 중인 bat은 안 건드림
         os.makedirs(os.path.dirname(dst), exist_ok=True)
