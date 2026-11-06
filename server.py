@@ -689,6 +689,34 @@ def tts_make(text, speak, folder, sid=7, speed=1.15, tempo=0.94):
 
 SAFE = re.compile(r"[^0-9A-Za-z가-힣_\-. ]")
 def proj_path(name): return os.path.join(PROJ, SAFE.sub("_", name).strip() or "제목없음") + ".shum"
+HIST = os.path.join(PROJ, "_history")   # 11-07 "대본 수정한거 다 날라갔네" → 저장할 때마다 이전 판을 남겨요
+def hist_snap(f, force=False):
+    """f(현재 프로젝트 파일)를 _history에 복사. 같은 이름의 마지막 판보다 3분 안이면 건너뜀(force면 늘). 이름마다 60개까지."""
+    if not os.path.exists(f): return None
+    os.makedirs(HIST, exist_ok=True); base = os.path.basename(f)[:-5]
+    mine = sorted(x for x in os.listdir(HIST) if x.startswith(base + "__") and x.endswith(".shum"))
+    if mine and not force and time.time() - os.path.getmtime(os.path.join(HIST, mine[-1])) < 180: return None
+    if mine and open(os.path.join(HIST, mine[-1]), "rb").read() == open(f, "rb").read(): return None
+    out = os.path.join(HIST, base + "__" + time.strftime("%Y%m%d_%H%M%S") + ".shum"); k = 1
+    while os.path.exists(out): out = out[:-5].rsplit("~", 1)[0] + f"~{k}.shum"; k += 1
+    shutil.copy2(f, out); os.utime(out, None)
+    for old in mine[:-59]:
+        try: os.remove(os.path.join(HIST, old))
+        except Exception: pass
+    return out
+def hist_list(name):
+    base = os.path.basename(proj_path(name))[:-5]; out = []
+    if os.path.isdir(HIST):
+        for x in os.listdir(HIST):
+            if x.startswith(base + "__") and x.endswith(".shum"): out.append({"file": "_history/" + x, "t": os.path.getmtime(os.path.join(HIST, x))})
+    for x in os.listdir(PROJ):   # 예전 방식 백업(.shum.bak)도 같이
+        if x.startswith(base + "_") and x.endswith(".shum.bak"): out.append({"file": x, "t": os.path.getmtime(os.path.join(PROJ, x))})
+    for o in out:
+        try:
+            j = json.load(open(os.path.join(PROJ, o["file"]), encoding="utf-8")); ts = [c for c in j.get("clips", []) if c.get("kind") == "text"]
+            o["n"] = len(ts); o["first"] = (sorted(ts, key=lambda c: c.get("start", 0))[0].get("text", "") if ts else "")[:40]
+        except Exception: o["n"] = 0; o["first"] = "(읽기 실패)"
+    return sorted(out, key=lambda o: -o["t"])
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -745,6 +773,12 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/project":
             f = proj_path(q.get("name", [""])[0])
             return self._json(json.load(open(f, encoding="utf-8"))) if os.path.exists(f) else self._json({"error": "없음"}, 404)
+        if p == "/api/history": return self._json(hist_list(q.get("name", [""])[0]))
+        if p == "/api/history/get":
+            rel = q.get("file", [""])[0].replace("\\", "/")
+            if ".." in rel or not (rel.startswith("_history/") or rel.endswith(".shum.bak")): return self._json({"error": "안 돼요"}, 400)
+            f = os.path.join(PROJ, rel)
+            return self._json(json.load(open(f, encoding="utf-8"))) if os.path.exists(f) else self._json({"error": "없음"}, 404)
         self.send_error(404)
 
     def do_POST(self):
@@ -778,14 +812,16 @@ class H(BaseHTTPRequestHandler):
                 return self._json({"items": [{"name": n, "have": os.path.exists(proj_path(n))} for n in names]})
             except Exception as e: return self._json({"items": [], "error": str(e)})
         if p == "/api/inbox/take":   # 초안을 받아 projects에 저장
-            n = self._body().get("name", "")
+            bd = self._body(); n = bd.get("name", "")
             try:
                 sha = REMOTE_SHA or "main"
                 with urllib.request.urlopen(f"https://raw.githubusercontent.com/{REPO}/{sha}/inbox/{urllib.parse.quote(n)}.shum", timeout=20) as r: j = json.loads(r.read().decode())
             except Exception:
                 with urllib.request.urlopen(f"https://raw.githubusercontent.com/{REPO}/main/inbox/{urllib.parse.quote(n)}.shum?t={time.time()}", timeout=20) as r: j = json.loads(r.read().decode())
             f = proj_path(n)
-            if os.path.exists(f): os.replace(f, f[:-5] + time.strftime("_%m%d%H%M") + ".shum.bak")   # 이미 있으면 백업
+            if os.path.exists(f):   # 이미 있으면: 화면에서 확인받은 경우만, 지금 판을 기록에 남기고 덮어써요
+                if not bd.get("overwrite"): return self._json({"ok": False, "exists": True, "name": n})
+                hist_snap(f, force=True)
             json.dump(j, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1); return self._json({"ok": True, "name": n})
         if p == "/api/prefetch":
             items = self._body().get("fetch", [])
@@ -803,6 +839,8 @@ class H(BaseHTTPRequestHandler):
             return self._json(out)
         if p == "/api/project":
             j = self._body(); f = proj_path(j.get("name", "제목없음")); tmp = f + ".tmp"
+            try: hist_snap(f, force=bool(j.pop("_snap", False)))
+            except Exception as e: log("history", e)
             json.dump(j, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=1); os.replace(tmp, f)
             return self._json({"ok": True, "path": f})
         if p == "/api/keys/set":   # 편집기 화면에서 키 넣기 → 이 PC의 키 파일에만 저장(밖으로 안 나감)

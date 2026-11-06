@@ -435,16 +435,33 @@ $("#projName").onchange = dirty;
 $("#btnSave").onclick = save;
 $("#btnNew").onclick = () => { if (P.clips.length && !confirmBox()) return; P = newProject(); undoS.length = redoS.length = 0; afterLoad(); };
 function confirmBox() { return window.confirm("지금 프로젝트는 저장됐나요? 새로 시작할까요?"); }
+const loadProj = async (n) => { P = await api("/api/project?name=" + encodeURIComponent(n)); undoS.length = redoS.length = 0; closeModal(); afterLoad(); relink(); };
 $("#btnOpen").onclick = async () => {
   const names = await api("/api/projects");
-  modal(`<h3>프로젝트 열기</h3><div class="plist">${names.map((n) => `<button data-n="${n}">${n}</button>`).join("") || '<p class="dim">저장된 프로젝트가 없어요.</p>'}</div><h3 style="margin-top:14px">Claude가 만든 초안</h3><div id="inboxL" class="plist"><p class="dim">불러오는 중…</p></div>`);
+  modal(`<h3>프로젝트 열기</h3><div class="plist">${names.map((n) => `<div class="row" style="margin:3px 0"><button class="grow" data-n="${n}">${n}</button><button data-h="${n}" title="저장할 때마다 남긴 이전 판">🕘 이전 판</button></div>`).join("") || '<p class="dim">저장된 프로젝트가 없어요.</p>'}</div><h3 style="margin-top:14px">Claude가 만든 초안</h3><div id="inboxL" class="plist"><p class="dim">불러오는 중…</p></div>`);
   api("/api/inbox", {}).then((r) => {
     const box = $("#inboxL"); if (!box) return;
-    box.innerHTML = (r.items || []).map((x) => `<button data-in="${x.name}">📥 ${x.name}${x.have ? ' <span class="dim">(받은 적 있음 · 다시 받으면 백업 후 덮어씀)</span>' : ""}</button>`).join("") || '<p class="dim">새 초안이 없어요.</p>';
-    box.querySelectorAll("[data-in]").forEach((b) => (b.onclick = async () => { b.textContent = "받는 중…"; await api("/api/inbox/take", { name: b.dataset.in }); P = await api("/api/project?name=" + encodeURIComponent(b.dataset.in)); undoS.length = redoS.length = 0; closeModal(); afterLoad(); relink(); }));
+    box.innerHTML = (r.items || []).map((x) => x.have
+      ? `<div class="row" style="margin:3px 0"><button class="grow" data-n2="${x.name}">📂 ${x.name} <span class="dim">(받아 둔 것 열기 · 내 수정 그대로)</span></button><button data-re="${x.name}" title="Claude 초안으로 처음부터 다시(지금 판은 이전 판에 남아요)">↺ 다시 받기</button></div>`
+      : `<button data-in="${x.name}">📥 ${x.name}</button>`).join("") || '<p class="dim">새 초안이 없어요.</p>';
+    const take = async (n, ow) => { const r = await api("/api/inbox/take", { name: n, overwrite: ow }); if (r && r.exists && !ow) return loadProj(n); loadProj(n); };
+    box.querySelectorAll("[data-in]").forEach((b) => (b.onclick = () => { b.textContent = "받는 중…"; take(b.dataset.in, false); }));
+    box.querySelectorAll("[data-n2]").forEach((b) => (b.onclick = () => loadProj(b.dataset.n2)));
+    box.querySelectorAll("[data-re]").forEach((b) => (b.onclick = () => { if (window.confirm(`"${b.dataset.re}"를 Claude 초안으로 처음부터 다시 받을까요?\n지금 고친 판은 🕘 이전 판에 남아서 되돌릴 수 있어요.`)) { b.textContent = "받는 중…"; take(b.dataset.re, true); } }));
   });
-  $("#modalBody").querySelectorAll("[data-n]").forEach((b) => (b.onclick = async () => { P = await api("/api/project?name=" + encodeURIComponent(b.dataset.n)); undoS.length = redoS.length = 0; closeModal(); afterLoad(); relink(); }));
+  $("#modalBody").querySelectorAll("[data-n]").forEach((b) => (b.onclick = () => loadProj(b.dataset.n)));
+  $("#modalBody").querySelectorAll("[data-h]").forEach((b) => (b.onclick = () => showHistory(b.dataset.h)));
 };
+async function showHistory(name) {
+  const hs = await api("/api/history?name=" + encodeURIComponent(name));
+  const ft = (t) => { const d = new Date(t * 1000); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  modal(`<h3>🕘 ${name} 이전 판</h3><p class="dim" style="font-size:12px">저장할 때마다(3분에 한 번) 남겨요. 고르면 그 판을 지금 프로젝트로 되살려요(지금 판도 기록에 남아요).</p><div class="plist">${hs.map((h) => `<button data-f="${h.file}"><b>${ft(h.t)}</b> · 문장 ${h.n}개<br><span class="dim" style="font-size:12px">${(h.first || "").replace(/</g, "&lt;")}</span></button>`).join("") || '<p class="dim">아직 남은 이전 판이 없어요.</p>'}</div>`);
+  $("#modalBody").querySelectorAll("[data-f]").forEach((b) => (b.onclick = async () => {
+    const j = await api("/api/history/get?file=" + encodeURIComponent(b.dataset.f)); if (!j || !j.clips) return;
+    undoS.push(JSON.stringify(P)); P = j; P.name = name; closeModal(); afterLoad(); relink();
+    await api("/api/project", Object.assign({}, P, { _snap: true })); $("#saveState").textContent = "이전 판으로 되살림 " + new Date().toLocaleTimeString() + " (Ctrl+Z로 취소)";
+  }));
+}
 function modal(html) { $("#modalBody").innerHTML = html; $("#modal").classList.remove("hidden"); }
 function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modalClose").onclick = closeModal;
