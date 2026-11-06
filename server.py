@@ -378,6 +378,12 @@ class H(BaseHTTPRequestHandler):
             j = self._body(); return self._json(recommend(j.get("channel"), j.get("topic", ""), int(j.get("n", 14))))
         if p == "/api/search":
             j = self._body(); return self._json(search(j.get("q", ""), j.get("source", "pexels"), j.get("orient", "")))
+        if p == "/api/fetch_pexels":   # API 키 없이: Pexels 영상 주소/번호로 바로 받기(11-06 Pexels 새 키 발급 중단)
+            j = self._body(); m = re.findall(r"(\d{5,})", j.get("url", ""))
+            if not m: return self._json({"error": "주소에서 영상 번호를 못 찾았어요"}, 400)
+            vid = m[-1]; page = j.get("url") if "pexels.com" in j.get("url", "") else f"https://www.pexels.com/video/{vid}/"
+            try: return self._json({"ids": fetch({"source": "pexels", "id": vid, "dl": f"https://www.pexels.com/download/video/{vid}/", "page": page, "author": "", "license": "Pexels License"}, j.get("folder") or None)})
+            except Exception as e: return self._json({"error": f"받기 오류: {e}"}, 500)
         if p == "/api/fetch":
             try: return self._json({"ids": fetch(self._body())})
             except Exception as e: return self._json({"error": f"받기 오류: {e}"}, 500)

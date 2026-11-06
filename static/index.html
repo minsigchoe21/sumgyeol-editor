@@ -39,6 +39,9 @@
       <div class="row"><input id="q" placeholder="검색어(영어), 예: sea otter"><select id="src"><option value="pexels">Pexels</option><option value="pixabay">Pixabay</option></select></div>
       <div class="row"><select id="orient"><option value="">모든 방향</option><option value="portrait">세로</option><option value="landscape">가로</option></select><button id="btnFind">찾기</button></div>
       <div id="findOut" class="grid"></div>
+      <p class="dim" style="margin:14px 0 4px;font-size:12px">키 없이 Pexels 영상 받기: 영상 페이지 주소나 번호를 붙여 넣어요(여러 개는 줄바꿈)</p>
+      <textarea id="pxUrls" style="width:100%;min-height:60px;background:#262b34;color:var(--fg);border:1px solid var(--line);border-radius:6px" placeholder="https://www.pexels.com/video/...-8104898/"></textarea>
+      <button id="btnPx">Pexels에서 받기</button> <span id="pxState" class="dim" style="font-size:12px"></span>
     </div>
   </section>
   <section id="center">

@@ -381,6 +381,11 @@ $("#btnKeys").onclick = () => {
   <div class="row end"><button id="kSave">저장</button></div>`);
   $("#kSave").onclick = async () => { await api("/api/keys/set", { pexels: $("#kPx").value, pixabay: $("#kPb").value, anthropic: $("#kCl").value }); closeModal(); initTop(); };
 };
+$("#btnPx").onclick = async () => {
+  const urls = $("#pxUrls").value.split(/\s+/).filter(Boolean); const folder = $("#folder")?.value.trim() || ""; let ok = 0;
+  for (let i = 0; i < urls.length; i++) { $("#pxState").textContent = `받는 중 ${i + 1}/${urls.length}…`; const r = await api("/api/fetch_pexels", { url: urls[i], folder }); if (!r.error) ok++; else $("#pxState").textContent = r.error; }
+  $("#pxState").textContent = `${ok}/${urls.length}개 받음 → 미디어 탭`; loadMedia();
+};
 async function initTop() {
   try { const v = await api("/api/version"); document.querySelector(".logo").title = "버전 " + v.version; document.querySelector(".logo").textContent = "숨결 편집기 " + v.version.slice(4); } catch (e) {}
   const chs = await api("/api/channels"); $("#chSel").innerHTML = chs.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
