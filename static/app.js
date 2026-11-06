@@ -100,9 +100,10 @@ function clipEl(c) {
   const d = document.createElement("div"); d.className = `clip ${c.kind}${c.id === sel ? " sel" : ""}`;
   d.style.left = c.start * pps + "px"; if (c.kind === "text") d.title = c.text || ""; d.style.width = Math.max(4, c.dur * pps) + "px";
   const m = MEDIA[c.media];
-  if (c.kind === "video" && m) { d.style.backgroundImage = `url(/media/${c.media}/strip.jpg)`; }
+  if (c.kind === "video" && m) { d.style.backgroundImage = `url(/media/${c.media}/strip.jpg)`; d.style.backgroundSize = `${(m.dur / (c.speed || 1)) * pps}px 100%`; d.style.backgroundPosition = `${-c.in / (c.speed || 1) * pps}px 0`; d.style.backgroundRepeat = "no-repeat"; }
   if (c.kind === "audio" && m) { d.style.backgroundImage = `url(/media/${c.media}/wave.png)`; d.style.backgroundSize = `${(m.dur / (c.speed || 1)) * pps}px 100%`; d.style.backgroundPosition = `${-c.in / (c.speed || 1) * pps}px 0`; }
-  d.innerHTML = `<div class="cn"${c.kind === "text" ? ' style="white-space:normal;font-size:11px;line-height:1.25"' : ""}>${c.kind === "text" ? (c.n ? c.n + ". " : "T ") + (c.text || "").replace(/\n/g, " / ") : (m ? m.name : "?")}</div><div class="h l"></div><div class="h r"></div>${c.fadeIn ? `<div class="fade in" style="width:${c.fadeIn * pps}px"></div>` : ""}${c.fadeOut ? `<div class="fade out" style="width:${c.fadeOut * pps}px"></div>` : ""}`;
+  const ov = c.kind === "video" && m ? c.dur - srcLeft(c) : 0;
+  d.innerHTML = (ov > 0.05 ? `<div class="over" style="width:${ov * pps}px" title="원본이 ${ov.toFixed(1)}초 모자라요 → ↔ 빈틈 메우기"></div>` : "") + `<div class="cn"${c.kind === "text" ? ' style="white-space:normal;font-size:11px;line-height:1.25"' : ""}>${c.kind === "text" ? (c.n ? c.n + ". " : "T ") + (c.text || "").replace(/\n/g, " / ") : (m ? m.name : "?")}</div><div class="h l"></div><div class="h r"></div>${c.fadeIn ? `<div class="fade in" style="width:${c.fadeIn * pps}px"></div>` : ""}${c.fadeOut ? `<div class="fade out" style="width:${c.fadeOut * pps}px"></div>` : ""}`;
   d.addEventListener("mousedown", (e) => startDrag(e, c, e.target.classList.contains("l") ? "l" : e.target.classList.contains("r") ? "r" : "m"));
   return d;
 }
@@ -178,8 +179,18 @@ function fillGap(a, b, g) {
   if (r > 0.01 && a && a.kind === "video") { const ns = Math.max(0.5, (a.speed || 1) * a.dur / (a.dur + r)); a.speed = +ns.toFixed(3); a.dur += r; r = 0; }   // 그래도 모자라면 앞 클립을 살짝 느리게
   if (r > 0.01 && a) a.dur += r;
 }
+function srcLeft(c) { const m = MEDIA[c.media]; return c.kind === "video" && m ? (m.dur - c.in) / (c.speed || 1) : 1e9; }
+function fixOverrun(c) {   // 클립 길이가 원본보다 길어 끝이 검게(멈춰) 보이는 것: 원본 앞부분을 더 쓰고, 그래도 모자라면 살짝 느리게
+  const m = MEDIA[c.media]; if (c.kind !== "video" || !m) return false; let over = c.dur - srcLeft(c); if (over <= 0.05) return false;
+  const back = Math.min(c.in, over * (c.speed || 1)); c.in -= back; over = c.dur - srcLeft(c);
+  if (over > 0.05) c.speed = +Math.max(0.4, (m.dur - c.in) / c.dur).toFixed(3);
+  if (c.dur > srcLeft(c) + 0.05) c.dur = srcLeft(c);   // 0.4배로도 모자라면 원본 끝까지만(남는 틈은 아래에서 메움)
+  return true;
+}
 function fillGaps() {
-  snap(); const v = P.clips.filter((x) => x.track === "V1").sort((p, q) => p.start - q.start); let n = 0;
+  snap(); let n = 0;
+  P.clips.filter((x) => x.track === "V1").forEach((c) => { if (fixOverrun(c)) n++; });
+  const v = P.clips.filter((x) => x.track === "V1").sort((p, q) => p.start - q.start);
   if (v[0] && v[0].start > 0.01) { fillGap(null, v[0], v[0].start); n++; }
   for (let i = 1; i < v.length; i++) { const a = v[i - 1], b = v[i], g = b.start - (a.start + a.dur); if (g > 0.01) { fillGap(a, b, g); n++; } }
   renderTL(); draw(); dirty(); flash(n ? `빈틈 ${n}곳을 메웠어요(자막 싱크 그대로)` : "빈틈이 없어요");

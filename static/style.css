@@ -73,3 +73,4 @@ footer#tl{position:absolute;left:0;right:0;bottom:0;height:250px;border-top:1px 
 .veo textarea{min-height:110px;font-size:11px}
 .veo ul{margin:4px 0 4px 16px;padding:0}
 .mi.msel{outline:2px solid var(--acc)}
+.clip .over{position:absolute;right:0;top:0;bottom:0;background:repeating-linear-gradient(45deg,#000c 0 6px,#ff8a6555 6px 12px);pointer-events:none}
