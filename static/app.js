@@ -170,6 +170,20 @@ function rippleTrim(which) {   // Q: 재생선 앞부분 잘라내고 당기기,
   else { const cut = c.dur - k; c.dur = k; shiftAfter(c.track, c.start + k + cut - 1e-3, -cut, c.id); }
   renderTL(); renderInsp(); draw();
 }
+// 빈틈 메우기(11-07 "중간에 비어 있는 영상 붙이는 거"): 클립 위치(자막 싱크)는 그대로 두고, 앞 클립을 늘리거나 뒤 클립을 앞당겨(원본의 앞부분 사용) 검은 틈을 채워요
+function fillGap(a, b, g) {
+  const avA = a ? (a.kind === "image" ? 1e9 : ((MEDIA[a.media]?.dur ?? 1e9) - a.in) / (a.speed || 1) - a.dur) : 0;
+  const x = Math.max(0, Math.min(g, avA)); if (a) a.dur += x; let r = g - x;
+  if (r > 0.01 && b) { const avB = b.kind === "image" ? 1e9 : b.in / (b.speed || 1); const y = Math.max(0, Math.min(r, avB)); b.start -= y; b.in -= y * (b.speed || 1); b.dur += y; r -= y; }
+  if (r > 0.01 && a && a.kind === "video") { const ns = Math.max(0.5, (a.speed || 1) * a.dur / (a.dur + r)); a.speed = +ns.toFixed(3); a.dur += r; r = 0; }   // 그래도 모자라면 앞 클립을 살짝 느리게
+  if (r > 0.01 && a) a.dur += r;
+}
+function fillGaps() {
+  snap(); const v = P.clips.filter((x) => x.track === "V1").sort((p, q) => p.start - q.start); let n = 0;
+  if (v[0] && v[0].start > 0.01) { fillGap(null, v[0], v[0].start); n++; }
+  for (let i = 1; i < v.length; i++) { const a = v[i - 1], b = v[i], g = b.start - (a.start + a.dur); if (g > 0.01) { fillGap(a, b, g); n++; } }
+  renderTL(); draw(); dirty(); flash(n ? `빈틈 ${n}곳을 메웠어요(자막 싱크 그대로)` : "빈틈이 없어요");
+}
 function closeGaps() {   // 영상 트랙 빈틈 모두 없애기
   snap(); let s0 = 0; P.clips.filter((x) => x.track === "V1").sort((a, b) => a.start - b.start).forEach((x) => { const ov = x.fadeIn && x.start < s0 ? Math.min(x.fadeIn, s0 - x.start) : 0; x.start = Math.max(0, s0 - ov); s0 = x.start + x.dur; }); renderTL(); draw(); flash("빈틈을 없앴어요");
 }
@@ -183,7 +197,7 @@ function setZoomAnim(c, z1, z2) { snap(); c.zoom = z1; c.zoomEnd = z2; c.xEnd = 
 function flash(msg) { const d = document.createElement("div"); d.id = "updOv"; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 1200); }
 function delSel() { if (!sel) return; snap(); P.clips = P.clips.filter((c) => c.id !== sel); sel = null; renderTL(); renderInsp(); draw(); }
 function addText() { snap(); const c = { id: uid(), track: "T1", kind: "text", start: t, in: 0, dur: 3, text: "글자를 입력하세요", size: 64, color: "#ffffff", y: 0.68, stroke: 8 }; P.clips.push(c); sel = c.id; renderTL(); renderInsp(); draw(); }
-$("#btnGap").onclick = closeGaps; $("#btnCut").onclick = cutSel; $("#btnCopy").onclick = copySel; $("#btnPaste").onclick = () => pasteAt(false);
+$("#btnGap").onclick = closeGaps; $("#btnFill").onclick = fillGaps; $("#btnCut").onclick = cutSel; $("#btnCopy").onclick = copySel; $("#btnPaste").onclick = () => pasteAt(false);
 $("#btnXfAll").onclick = crossfadeAll; $("#btnSplit").onclick = splitAt; $("#btnDel").onclick = delSel; $("#btnText").onclick = addText; $("#btnUndo").onclick = undo; $("#btnRedo").onclick = redo;
 
 // ------------------------------------------------------------ 속성 ----
