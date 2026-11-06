@@ -167,23 +167,40 @@ def describe(items):
     return claude("아래는 무료 영상 검색 결과예요. 각 영상이 무엇을 보여 주는지 한국어 한 줄(20자 안팎)로 쉽게 써 주고, "
                   "쇼츠 주제로 쓸 짧은 한국어 이름(topic, 예: 해달·빛나는 바다)도 붙여 줘. 모르는 건 추측하지 말고 제목에 있는 것만.\n" + "\n".join(lines), 2500, "describe")
 
-def claude(content, max_tokens=6000, schema="recommend"):
+def _call(body):
     k = keys()
-    if not k.get("anthropic"): return {"error": f"Claude API 키가 없어요. 오른쪽 위 🔑 키 설정에서 넣어 주세요."}
+    return http_json("https://api.anthropic.com/v1/messages",
+                     {"x-api-key": k["anthropic"], "anthropic-version": "2023-06-01", "content-type": "application/json"}, body, timeout=300)
+def _parse_text(txt):
+    t = re.sub(r"^```(json)?|```$", "", txt.strip(), flags=re.M).strip()
+    m = re.search(r"\{.*\}", t, re.S)
+    return json.loads(m.group(0)) if m else None
+FORCE_OK = True   # 도구 강제가 안 되는 모델이면 한 번 실패한 뒤로는 바로 auto
+def claude(content, max_tokens=6000, schema="recommend"):
+    """Claude에게 묻고 JSON(dict)으로 받아요. answer 도구로 형식을 맞추되, 모델이 도구 강제를 지원하지 않으면(11-06 오류 400) 자동 선택으로 바꿔요."""
+    SCHEMAS.update(globals().get("SCHEMAS_EXTRA", {}))
+    k = keys()
+    if not k.get("anthropic"): return {"error": "Claude API 키가 없어요. 오른쪽 위 🔑 키 설정에서 넣어 주세요."}
+    if isinstance(content, str): content = [{"type": "text", "text": content}]
+    content = content + [{"type": "text", "text": "반드시 answer 도구를 한 번 호출해서 결과를 돌려줘요. 다른 말은 쓰지 마세요."}]
     body = {"model": k.get("model", "claude-sonnet-5-5"), "max_tokens": max_tokens, "messages": [{"role": "user", "content": content}],
-            "tools": [{"name": "answer", "description": "결과를 이 형식으로 돌려줘요.", "input_schema": SCHEMAS[schema]}],
-            "tool_choice": {"type": "tool", "name": "answer"}}
+            "tools": [{"name": "answer", "description": "결과를 이 형식으로 돌려줘요.", "input_schema": SCHEMAS[schema]}]}
     try:
-        r = http_json("https://api.anthropic.com/v1/messages",
-                      {"x-api-key": k["anthropic"], "anthropic-version": "2023-06-01", "content-type": "application/json"}, body, timeout=300)
+        global FORCE_OK
+        for choice in (({"type": "tool", "name": "answer"},) if FORCE_OK else ()) + ({"type": "auto"},):
+            try: r = _call({**body, "tool_choice": choice}); break
+            except urllib.error.HTTPError as e:
+                msg = e.read().decode()
+                if e.code == 400 and "tool_choice" in msg and choice["type"] == "tool": FORCE_OK = False; continue
+                return {"error": f"Claude API 오류 {e.code}: {msg[:300]}"}
         for b in r.get("content", []):
             if b.get("type") == "tool_use": return b.get("input", {})
-        txt = "".join(b.get("text", "") for b in r.get("content", []))
-        m = re.search(r"\{.*\}", txt, re.S)
-        try: return json.loads(m.group(0)) if m else {"error": "답을 못 읽었어요"}
-        except Exception: return {"error": "답 형식이 깨졌어요. 한 번 더 눌러 주세요."}
-    except urllib.error.HTTPError as e:
-        return {"error": f"Claude API 오류 {e.code}: {e.read().decode()[:300]}"}
+        txt = "".join(b.get("text", "") for b in r.get("content", []) if b.get("type") == "text")
+        try:
+            j = _parse_text(txt)
+            if j: return j
+        except Exception: pass
+        return {"error": "답 형식이 깨졌어요. 한 번 더 눌러 주세요."}
     except Exception as e:
         return {"error": f"Claude API 오류: {e}"}
 
