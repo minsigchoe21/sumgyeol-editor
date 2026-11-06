@@ -137,39 +137,48 @@ SCRIPT_FMT = """답은 JSON 하나만:
  "script":{"title":"고른 주제","sentences":[{"ko":"한국어 대사","en":"English subtitle","search":["pexels 검색어(영어) 1~3개"],"fact_source":"근거(기관·매체·연도)"}]}}
 ideas는 3개, script는 그중 첫 번째로. 검색어는 무료 실사 영상(Pexels/Pixabay)에서 실제로 찾을 수 있는 구체적인 장면으로."""
 
-def claude(content, max_tokens=6000):
+# 답을 늘 올바른 JSON으로 받으려고 "도구 사용(tool use)"으로 형식을 강제해요(11-06 "Expecting ',' delimiter" 오류 대응)
+S_STR = {"type": "string"}
+SCHEMAS = {
+  "keywords": {"type": "object", "properties": {"keywords": {"type": "array", "items": S_STR}}, "required": ["keywords"]},
+  "recommend": {"type": "object", "properties": {
+      "ideas": {"type": "array", "items": {"type": "object", "properties": {"title": S_STR, "hook": S_STR, "why": S_STR}, "required": ["title"]}},
+      "script": {"type": "object", "properties": {"title": S_STR, "sentences": {"type": "array", "items": {"type": "object", "properties": {
+          "ko": S_STR, "en": S_STR, "search": {"type": "array", "items": S_STR}, "fact_source": S_STR}, "required": ["ko", "en"]}}}, "required": ["title", "sentences"]}},
+      "required": ["ideas", "script"]},
+  "media_script": {"type": "object", "properties": {"title": S_STR, "hook": S_STR,
+      "clips_note": {"type": "array", "items": {"type": "object", "properties": {"clip": S_STR, "what": S_STR, "species_ok": {"type": "boolean"}}, "required": ["clip", "what"]}},
+      "sentences": {"type": "array", "items": {"type": "object", "properties": {"ko": S_STR, "en": S_STR, "clip": S_STR, "clip_in": {"type": "number"}, "fact_source": S_STR}, "required": ["ko", "en", "clip"]}}},
+      "required": ["title", "sentences"]},
+}
+def claude(content, max_tokens=6000, schema="recommend"):
     k = keys()
-    if not k.get("anthropic"): return {"error": f"Claude API 키가 없어요. {KEYF} 파일에 \"anthropic\" 키를 적어 주세요(사용법은 README)."}
+    if not k.get("anthropic"): return {"error": f"Claude API 키가 없어요. 오른쪽 위 🔑 키 설정에서 넣어 주세요."}
+    body = {"model": k.get("model", "claude-sonnet-5-5"), "max_tokens": max_tokens, "messages": [{"role": "user", "content": content}],
+            "tools": [{"name": "answer", "description": "결과를 이 형식으로 돌려줘요.", "input_schema": SCHEMAS[schema]}],
+            "tool_choice": {"type": "tool", "name": "answer"}}
     try:
         r = http_json("https://api.anthropic.com/v1/messages",
-                      {"x-api-key": k["anthropic"], "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                      {"model": k.get("model", "claude-sonnet-5-5"), "max_tokens": max_tokens, "messages": [{"role": "user", "content": content}]}, timeout=300)
+                      {"x-api-key": k["anthropic"], "anthropic-version": "2023-06-01", "content-type": "application/json"}, body, timeout=300)
+        for b in r.get("content", []):
+            if b.get("type") == "tool_use": return b.get("input", {})
         txt = "".join(b.get("text", "") for b in r.get("content", []))
         m = re.search(r"\{.*\}", txt, re.S)
-        return json.loads(m.group(0)) if m else {"error": "답을 못 읽었어요", "raw": txt[:2000]}
+        try: return json.loads(m.group(0)) if m else {"error": "답을 못 읽었어요"}
+        except Exception: return {"error": "답 형식이 깨졌어요. 한 번 더 눌러 주세요."}
     except urllib.error.HTTPError as e:
         return {"error": f"Claude API 오류 {e.code}: {e.read().decode()[:300]}"}
     except Exception as e:
         return {"error": f"Claude API 오류: {e}"}
 
 def recommend(channel, topic, n_sent):
-    k = keys()
-    if not k.get("anthropic"): return {"error": f"Claude API 키가 없어요. {KEYF} 파일에 \"anthropic\" 키를 적어 주세요(사용법은 README)."}
     ch = next((c for c in channels() if c["id"] == channel), None)
     if not ch: return {"error": "채널을 못 찾았어요"}
     prompt = (f"채널: {ch['name']}\n채널 규칙:\n{ch['rules']}\n\n"
-              f"주제: {topic or '(채널에 맞는 새 주제를 추천해 줘)'}\n문장 수: 약 {n_sent}문장\n\n{SCRIPT_FMT}")
-    try:
-        r = http_json("https://api.anthropic.com/v1/messages",
-                      {"x-api-key": k["anthropic"], "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                      {"model": k.get("model", "claude-sonnet-5-5"), "max_tokens": 4000, "messages": [{"role": "user", "content": prompt}]}, timeout=180)
-        txt = "".join(b.get("text", "") for b in r.get("content", []))
-        m = re.search(r"\{.*\}", txt, re.S)
-        return json.loads(m.group(0)) if m else {"error": "답을 못 읽었어요", "raw": txt[:2000]}
-    except urllib.error.HTTPError as e:
-        return {"error": f"Claude API 오류 {e.code}: {e.read().decode()[:300]}"}
-    except Exception as e:
-        return {"error": f"Claude API 오류: {e}"}
+              f"주제: {topic or '(채널에 맞는 새 주제를 추천해 줘)'}\n문장 수: 약 {n_sent}문장\n\n"
+              "주제 후보(ideas) 3개와, 그중 첫 번째로 쓴 대본(script)을 answer 도구로 돌려줘. 문장마다 ko(한국어 대사), en(영어 자막), "
+              "search(무료 실사 영상 Pexels/Pixabay 영어 검색어 1~3개, 실제로 있을 법한 구체적인 장면), fact_source(근거: 기관·논문·연도, 모르면 '확인 필요').")
+    return claude(prompt, 6000, "recommend")
 
 def search(q, source, orient):
     k = keys(); out = []
@@ -190,21 +199,69 @@ def search(q, source, orient):
                 vs = v.get("videos", {}); best = vs.get("large") if vs.get("large", {}).get("url") else vs.get("medium", {})
                 out.append({"source": "pixabay", "id": str(v["id"]), "thumb": best.get("thumbnail") or vs.get("tiny", {}).get("thumbnail"), "dur": v.get("duration"),
                             "w": best.get("width"), "h": best.get("height"), "dl": best.get("url"), "page": v.get("pageURL"), "author": v.get("user", ""), "license": "Pixabay Content License"})
+        elif source == "commons":   # 위키미디어 공용: 키 없음. 퍼블릭 도메인·CC0·CC BY·CC BY-SA만(출처 표시 필요)
+            u = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode({"action": "query", "format": "json", "generator": "search", "gsrsearch": f"{q} filetype:video",
+                "gsrnamespace": 6, "gsrlimit": 20, "prop": "imageinfo", "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 320})
+            pages = http_json(u, {"User-Agent": UA}).get("query", {}).get("pages", {})
+            for pg in sorted(pages.values(), key=lambda x: x.get("index", 0)):
+                ii = (pg.get("imageinfo") or [{}])[0]; em = ii.get("extmetadata", {})
+                lic = re.sub("<[^>]+>", "", em.get("LicenseShortName", {}).get("value", "")).strip()
+                if not re.match(r"(?i)(public domain|pd|cc0|cc[- ]by)", lic) or re.search(r"(?i)\bnc\b|nd", lic): continue
+                if (ii.get("duration") or 99) < 3: continue
+                out.append({"source": "commons", "id": str(pg["pageid"]), "thumb": ii.get("thumburl"), "dur": round(ii.get("duration") or 0, 1), "w": ii.get("width"), "h": ii.get("height"),
+                            "dl": ii.get("url"), "page": ii.get("descriptionurl"), "author": re.sub("<[^>]+>", "", em.get("Artist", {}).get("value", ""))[:80].strip(),
+                            "license": lic, "title": pg.get("title", "")[5:]})
+        elif source == "nasa":   # NASA 이미지·영상 라이브러리: 키 없음, 대부분 퍼블릭 도메인(NASA 로고·제3자 자료 제외)
+            u = "https://images-api.nasa.gov/search?" + urllib.parse.urlencode({"q": q, "media_type": "video"})
+            for it in http_json(u, {"User-Agent": UA}).get("collection", {}).get("items", [])[:15]:
+                dt = (it.get("data") or [{}])[0]; th = next((l["href"] for l in it.get("links", []) if l.get("render") == "image"), None)
+                out.append({"source": "nasa", "id": dt.get("nasa_id", ""), "thumb": th, "dur": None, "w": None, "h": None, "dl": it.get("href"),
+                            "page": f"https://images.nasa.gov/details/{urllib.parse.quote(dt.get('nasa_id', ''))}", "author": dt.get("center", "NASA"),
+                            "license": "NASA (public domain, check for third-party)", "title": dt.get("title", "")})
     except Exception as e:
-        return {"error": f"검색 오류: {e}"}
+        return {"error": f"검색 오류({source}): {e}"}
     return {"items": out}
+
+WONDER = ["bioluminescence", "murmuration starlings", "mimic octopus", "cuttlefish color change", "volcano lava flow", "aurora timelapse", "jellyfish swarm",
+          "coral spawning", "humpback whale breach", "slime mold timelapse", "lightning storm slow motion", "glacier calving", "sardine run", "manta ray",
+          "hummingbird slow motion", "mantis shrimp", "firefly synchronous", "sea otter", "chameleon tongue", "leafcutter ants", "geyser eruption", "sand dunes wind",
+          "space station earth view", "solar flare", "comet", "deep sea creature", "seahorse", "fungi growth timelapse", "dragonfly emerging", "salmon run"]
+def wonder(n_kw=6):
+    """✨ 신기한 영상 둘러보기: 신기한 자연 현상 검색어 몇 개를 골라 모든 무료 출처에서 찾아요."""
+    import random
+    k = keys(); srcs = ["commons", "nasa"] + [x for x in ("pixabay", "pexels") if k.get(x)]
+    out = []
+    for kw in random.sample(WONDER, n_kw):
+        for src in srcs:
+            items = search(kw, src, "").get("items", [])[:3]
+            for it in items: it["kw"] = kw
+            out += items
+    random.shuffle(out); return {"items": out, "sources": srcs}
+
+UA = "sumgyeol-editor/1.0 (personal shorts editor)"
+def nasa_file(href):
+    """NASA 항목의 파일 목록에서 가장 알맞은 mp4(orig > large > medium)를 골라요."""
+    files = http_json(href, {"User-Agent": UA})
+    mp4 = [f for f in files if f.lower().endswith(".mp4")]
+    for tag in ("~orig", "~large", "~medium", ""):
+        for f in mp4:
+            if tag in f: return f.replace("http://", "https://")
+    raise RuntimeError("mp4가 없어요")
 
 def fetch(item, folder=None):
     """고른 영상을 받아 미디어로 가져오고, 출처를 credits.json에 적어요. folder = sources 안 편 폴더 이름."""
     d = os.path.join(SOURCES, folder) if folder else DL; os.makedirs(d, exist_ok=True)
-    name = f"{item['source']}_{item['id']}.mp4"; dst = os.path.join(d, name)
+    dl = nasa_file(item["dl"]) if item["source"] == "nasa" else item["dl"]
+    ext = os.path.splitext(urllib.parse.urlparse(dl).path)[1].lower() or ".mp4"
+    if ext not in VIDEO_EXT: ext = ".mp4"
+    name = f"{item['source']}_{SAFE.sub('_', str(item['id']))[:60]}{ext}"; dst = os.path.join(d, name)
     if not os.path.exists(dst):
-        req = urllib.request.Request(item["dl"], headers={"User-Agent": "Mozilla/5.0 (sumgyeol-editor)"})
+        req = urllib.request.Request(dl, headers={"User-Agent": UA if item["source"] in ("commons", "nasa") else "Mozilla/5.0 (sumgyeol-editor)"})
         with urllib.request.urlopen(req, timeout=600) as r, open(dst + ".part", "wb") as f: shutil.copyfileobj(r, f, 1 << 20)
         os.replace(dst + ".part", dst)
     cf = os.path.join(d, "credits.json")
     cr = json.load(open(cf, encoding="utf-8")) if os.path.exists(cf) else {}
-    cr[name] = {k_: item.get(k_) for k_ in ("source", "id", "page", "author", "license")}
+    cr[name] = {k_: item.get(k_) for k_ in ("source", "id", "page", "author", "license", "title")}
     json.dump(cr, open(cf, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     ids = import_paths([dst])
     for i in ids: DB[i]["credit"] = cr[name]
@@ -218,13 +275,13 @@ def collect(channel, topic, n, orient, folder):
     kws = [topic]
     ch = next((c for c in channels() if c["id"] == channel), {"name": channel, "rules": ""})
     r = claude(f"채널 {ch['name']}의 쇼츠 주제: {topic}\n이 주제의 쇼츠에 쓸 무료 실사 영상(Pexels·Pixabay)을 찾을 영어 검색어 8개를 만들어 줘. "
-               "주인공 동물·장소·행동·관련 생물·환경을 고르게, 실제로 영상이 있을 법한 구체적인 말로. 답은 JSON 하나만: {\"keywords\":[\"...\"]}", 800)
+               "주인공 동물·장소·행동·관련 생물·환경을 고르게, 실제로 영상이 있을 법한 구체적인 말로. answer 도구로 돌려줘.", 800, "keywords")
     if r.get("keywords"): kws = r["keywords"][:8]
     COLLECT[folder]["keywords"] = kws
     per = max(1, -(-n // len(kws))); got = set(); k = keys()
     for kw in kws:
-        for src in ("pexels", "pixabay"):
-            if not k.get(src): continue
+        for src in ("pixabay", "pexels", "commons", "nasa"):
+            if src in ("pixabay", "pexels") and not k.get(src): continue
             COLLECT[folder]["state"] = f"찾는 중: {kw} ({src})"
             res = search(kw, src, orient).get("items", []) or search(kw, src, "").get("items", [])
             c = 0
@@ -262,12 +319,11 @@ def script_from_media(channel, topic, ids, n_sent):
                 "- 문장마다 가장 잘 맞는 클립 번호(C1…)와 그 클립에서 쓸 시작 초(clip_in)를 골라. 같은 클립을 여러 번 써도 되지만 연달아 쓰지는 마.\n"
                 "- 영상에 보이는 것과 대사가 어긋나지 않게. 영상 속 동물이 주제와 다른 종이면 그렇다고 clips_note에 적어.\n"
                 "- 사실은 널리 확인된 것만, 문장마다 근거(기관·논문·연도)를 적고, 확실하지 않으면 fact_source에 '확인 필요'.\n"
-                '답은 JSON 하나만: {"title":"","hook":"","clips_note":[{"clip":"C1","what":"보이는 것 한 줄","species_ok":true}],'
-                '"sentences":[{"ko":"한국어 대사","en":"English subtitle","clip":"C1","clip_in":0.0,"fact_source":""}]}'}]
+                "answer 도구로 돌려줘: title, hook(첫 문장), clips_note(클립마다 보이는 것 한 줄과 주제 종이 맞는지), sentences(ko, en, clip, clip_in, fact_source)."}]
     for j, mid in enumerate(vids):
         content.append({"type": "text", "text": f"C{j + 1}: {DB[mid]['name']} ({DB[mid]['dur']:.1f}초)"})
         for b in frames_b64(mid): content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}})
-    r = claude(content, 8000)
+    r = claude(content, 8000, "media_script")
     if r.get("sentences"):
         for x in r["sentences"]:
             try: x["media"] = vids[int(str(x.get("clip", "C1")).lstrip("Cc")) - 1]
@@ -378,6 +434,7 @@ class H(BaseHTTPRequestHandler):
             j = self._body(); return self._json(recommend(j.get("channel"), j.get("topic", ""), int(j.get("n", 14))))
         if p == "/api/search":
             j = self._body(); return self._json(search(j.get("q", ""), j.get("source", "pexels"), j.get("orient", "")))
+        if p == "/api/wonder": return self._json(wonder())
         if p == "/api/fetch_pexels":   # API 키 없이: Pexels 영상 주소/번호로 바로 받기(11-06 Pexels 새 키 발급 중단)
             j = self._body(); m = re.findall(r"(\d{5,})", j.get("url", ""))
             if not m: return self._json({"error": "주소에서 영상 번호를 못 찾았어요"}, 400)
@@ -385,7 +442,7 @@ class H(BaseHTTPRequestHandler):
             try: return self._json({"ids": fetch({"source": "pexels", "id": vid, "dl": f"https://www.pexels.com/download/video/{vid}/", "page": page, "author": "", "license": "Pexels License"}, j.get("folder") or None)})
             except Exception as e: return self._json({"error": f"받기 오류: {e}"}, 500)
         if p == "/api/fetch":
-            try: return self._json({"ids": fetch(self._body())})
+            try: j = self._body(); return self._json({"ids": fetch(j, j.get("folder") or None)})
             except Exception as e: return self._json({"error": f"받기 오류: {e}"}, 500)
         if p == "/api/media/remove":
             mid = self._body().get("id")

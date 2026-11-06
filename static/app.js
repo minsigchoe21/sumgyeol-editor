@@ -363,15 +363,24 @@ function scriptToSubs() {
   for (const x of SCRIPT.script.sentences) { const d = Math.max(2.5, (x.ko || "").replace(/\s/g, "").length / 6.3); P.clips.push({ id: uid(), track: "T1", kind: "text", start: s, in: 0, dur: d, text: x.en || x.ko, size: 58, color: "#ffffff", y: 0.68, stroke: 8 }); s += d; }
   renderTL(); draw();
 }
+const SRC_NAME = { pexels: "Pexels", pixabay: "Pixabay", commons: "위키미디어", nasa: "NASA" };
+function showFound(items) {
+  const esc = (x) => String(x ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+  $("#findOut").innerHTML = items.map((it, i) => `<div class="fi"><img src="${esc(it.thumb)}" alt="" loading="lazy" title="${esc(it.title || it.kw || "")}"><div class="meta"><b>${SRC_NAME[it.source] || it.source}</b>${it.kw ? " · " + esc(it.kw) : ""}<br>${it.w ? it.w + "×" + it.h + " · " : ""}${it.dur ? it.dur + "초" : ""}<br><span title="${esc(it.license)}">${esc((it.license || "").slice(0, 28))}</span>${it.author ? "<br>" + esc(it.author.slice(0, 30)) : ""} <a href="${esc(it.page)}" target="_blank" style="color:#7fd0ff">원본</a></div><button data-i="${i}">받아서 넣기</button></div>`).join("") || '<p class="dim">없어요.</p>';
+  $("#findOut").querySelectorAll("[data-i]").forEach((b) => (b.onclick = async () => {
+    b.textContent = "받는 중…"; b.disabled = true; const f = await api("/api/fetch", { ...items[+b.dataset.i], folder: $("#folder")?.value.trim() || "" });
+    b.textContent = f.error ? "실패" : "받음 ✓"; if (f.error) b.title = f.error; loadMedia();
+  }));
+}
 $("#btnFind").onclick = async () => {
   $("#findOut").innerHTML = '<p class="dim">찾는 중…</p>';
   const r = await api("/api/search", { q: $("#q").value, source: $("#src").value, orient: $("#orient").value });
   if (r.error) { $("#findOut").innerHTML = `<p style="color:#ff8a65">${r.error}</p>`; return; }
-  $("#findOut").innerHTML = r.items.map((it, i) => `<div class="fi"><img src="${it.thumb}" alt=""><div class="meta">${it.w}×${it.h} · ${it.dur}초<br>${it.author}</div><button data-i="${i}">받아서 넣기</button></div>`).join("") || '<p class="dim">없어요.</p>';
-  $("#findOut").querySelectorAll("[data-i]").forEach((b) => (b.onclick = async () => {
-    b.textContent = "받는 중…"; b.disabled = true; const f = await api("/api/fetch", r.items[+b.dataset.i]);
-    b.textContent = f.error ? "실패" : "받음 ✓"; loadMedia(); document.querySelector('[data-tab="media"]').click();
-  }));
+  showFound(r.items);
+};
+$("#btnWonder").onclick = async () => {
+  $("#findOut").innerHTML = '<p class="dim">신기한 영상을 여러 곳에서 찾는 중(20~40초)…</p>';
+  const r = await api("/api/wonder", {}); showFound(r.items || []);
 };
 $("#btnKeys").onclick = () => {
   modal(`<h3>키 설정</h3><p class="dim" style="font-size:12px">여기 넣은 키는 이 PC의 키 파일에만 저장돼요(채팅·Drive에 안 올라가요). 비워 두면 그대로 둬요.</p>
