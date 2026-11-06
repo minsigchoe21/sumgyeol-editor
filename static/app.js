@@ -332,7 +332,12 @@ $("#btnNew").onclick = () => { if (P.clips.length && !confirmBox()) return; P = 
 function confirmBox() { return window.confirm("지금 프로젝트는 저장됐나요? 새로 시작할까요?"); }
 $("#btnOpen").onclick = async () => {
   const names = await api("/api/projects");
-  modal(`<h3>프로젝트 열기</h3><div class="plist">${names.map((n) => `<button data-n="${n}">${n}</button>`).join("") || '<p class="dim">저장된 프로젝트가 없어요.</p>'}</div>`);
+  modal(`<h3>프로젝트 열기</h3><div class="plist">${names.map((n) => `<button data-n="${n}">${n}</button>`).join("") || '<p class="dim">저장된 프로젝트가 없어요.</p>'}</div><h3 style="margin-top:14px">Claude가 만든 초안</h3><div id="inboxL" class="plist"><p class="dim">불러오는 중…</p></div>`);
+  api("/api/inbox", {}).then((r) => {
+    const box = $("#inboxL"); if (!box) return;
+    box.innerHTML = (r.items || []).map((x) => `<button data-in="${x.name}">📥 ${x.name}${x.have ? ' <span class="dim">(받은 적 있음 · 다시 받으면 백업 후 덮어씀)</span>' : ""}</button>`).join("") || '<p class="dim">새 초안이 없어요.</p>';
+    box.querySelectorAll("[data-in]").forEach((b) => (b.onclick = async () => { b.textContent = "받는 중…"; await api("/api/inbox/take", { name: b.dataset.in }); P = await api("/api/project?name=" + encodeURIComponent(b.dataset.in)); undoS.length = redoS.length = 0; closeModal(); afterLoad(); relink(); }));
+  });
   $("#modalBody").querySelectorAll("[data-n]").forEach((b) => (b.onclick = async () => { P = await api("/api/project?name=" + encodeURIComponent(b.dataset.n)); undoS.length = redoS.length = 0; closeModal(); afterLoad(); relink(); }));
 };
 function modal(html) { $("#modalBody").innerHTML = html; $("#modal").classList.remove("hidden"); }

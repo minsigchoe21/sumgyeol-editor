@@ -533,6 +533,23 @@ class H(BaseHTTPRequestHandler):
         p = urlparse(self.path).path
         if p == "/api/pick": return self._json({"ids": import_paths(pick_files())})
         if p == "/api/import": return self._json({"ids": import_paths(self._body().get("paths", []))})
+        if p == "/api/inbox":   # GitHub inbox/의 Claude 초안 목록(아직 projects에 없는 것)
+            try:
+                req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/contents/inbox?ref=main", headers={"User-Agent": "sumgyeol-editor"})
+                with urllib.request.urlopen(req, timeout=10) as r: lst = json.loads(r.read().decode())
+                names = [f["name"][:-5] for f in lst if f["name"].endswith(".shum")]
+                return self._json({"items": [{"name": n, "have": os.path.exists(proj_path(n))} for n in names]})
+            except Exception as e: return self._json({"items": [], "error": str(e)})
+        if p == "/api/inbox/take":   # 초안을 받아 projects에 저장
+            n = self._body().get("name", "")
+            try:
+                sha = REMOTE_SHA or "main"
+                with urllib.request.urlopen(f"https://raw.githubusercontent.com/{REPO}/{sha}/inbox/{urllib.parse.quote(n)}.shum", timeout=20) as r: j = json.loads(r.read().decode())
+            except Exception:
+                with urllib.request.urlopen(f"https://raw.githubusercontent.com/{REPO}/main/inbox/{urllib.parse.quote(n)}.shum?t={time.time()}", timeout=20) as r: j = json.loads(r.read().decode())
+            f = proj_path(n)
+            if os.path.exists(f): os.replace(f, f[:-5] + time.strftime("_%m%d%H%M") + ".shum.bak")   # 이미 있으면 백업
+            json.dump(j, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1); return self._json({"ok": True, "name": n})
         if p == "/api/prefetch":
             items = self._body().get("fetch", [])
             if PREFETCH["done"]: threading.Thread(target=prefetch, args=(items,), daemon=True).start()
