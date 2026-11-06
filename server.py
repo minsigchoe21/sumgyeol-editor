@@ -151,6 +151,22 @@ SCHEMAS = {
       "sentences": {"type": "array", "items": {"type": "object", "properties": {"ko": S_STR, "en": S_STR, "clip": S_STR, "clip_in": {"type": "number"}, "fact_source": S_STR}, "required": ["ko", "en", "clip"]}}},
       "required": ["title", "sentences"]},
 }
+SCHEMAS["describe"] = {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
+    "i": {"type": "integer"}, "ko": S_STR, "topic": S_STR}, "required": ["i", "ko"]}}}, "required": ["items"]}
+WONDER_KO = {"bioluminescence": "빛나는 바다(생물발광)", "murmuration starlings": "찌르레기 떼의 군무", "mimic octopus": "흉내문어", "cuttlefish color change": "갑오징어 색 바꾸기",
+    "volcano lava flow": "흐르는 용암", "aurora timelapse": "오로라 타임랩스", "jellyfish swarm": "해파리 떼", "coral spawning": "산호 산란", "humpback whale breach": "혹등고래 점프",
+    "slime mold timelapse": "점균 타임랩스", "lightning storm slow motion": "번개 슬로모션", "glacier calving": "빙하 붕괴", "sardine run": "정어리 떼 이동", "manta ray": "만타가오리",
+    "hummingbird slow motion": "벌새 슬로모션", "mantis shrimp": "갯가재", "firefly synchronous": "반딧불이 동시 점멸", "sea otter": "해달", "chameleon tongue": "카멜레온 혀",
+    "leafcutter ants": "가위개미", "geyser eruption": "간헐천 분출", "sand dunes wind": "바람에 움직이는 사구", "space station earth view": "우주정거장에서 본 지구", "solar flare": "태양 플레어",
+    "comet": "혜성", "deep sea creature": "심해 생물", "seahorse": "해마", "fungi growth timelapse": "버섯 자라는 타임랩스", "dragonfly emerging": "잠자리 날개돋이", "salmon run": "연어 회귀"}
+def describe(items):
+    """검색 결과 카드에 붙일 한 줄 한국어 설명(11-06 "어떤 내용인지 간략하게 한글로")."""
+    if not keys().get("anthropic"):
+        return {"items": [{"i": i, "ko": WONDER_KO.get(it.get("kw", ""), it.get("title") or it.get("kw") or ""), "topic": WONDER_KO.get(it.get("kw", ""), "")} for i, it in enumerate(items)]}
+    lines = [f"{i}. [{it.get('source')}] 검색어: {it.get('kw') or ''} / 제목·태그: {it.get('title') or ''} / 설명: {it.get('desc') or ''}" for i, it in enumerate(items)]
+    return claude("아래는 무료 영상 검색 결과예요. 각 영상이 무엇을 보여 주는지 한국어 한 줄(20자 안팎)로 쉽게 써 주고, "
+                  "쇼츠 주제로 쓸 짧은 한국어 이름(topic, 예: 해달·빛나는 바다)도 붙여 줘. 모르는 건 추측하지 말고 제목에 있는 것만.\n" + "\n".join(lines), 2500, "describe")
+
 def claude(content, max_tokens=6000, schema="recommend"):
     k = keys()
     if not k.get("anthropic"): return {"error": f"Claude API 키가 없어요. 오른쪽 위 🔑 키 설정에서 넣어 주세요."}
@@ -191,14 +207,15 @@ def search(q, source, orient):
                 if not fs: continue
                 best = min(fs, key=lambda f: abs(min(f["width"], f["height"]) - 1080))
                 out.append({"source": "pexels", "id": str(v["id"]), "thumb": v.get("image"), "dur": v.get("duration"), "w": best["width"], "h": best["height"],
-                            "dl": best["link"], "page": v.get("url"), "author": v.get("user", {}).get("name", ""), "license": "Pexels License"})
+                            "dl": best["link"], "page": v.get("url"), "author": v.get("user", {}).get("name", ""), "license": "Pexels License",
+                            "title": re.sub(r"[-/]", " ", (v.get("url") or "").rstrip("/").split("/")[-1]).rsplit(" ", 1)[0]})
         elif source == "pixabay":
             if not k.get("pixabay"): return {"error": f"Pixabay 키가 없어요. {KEYF}에 \"pixabay\"를 적어 주세요."}
             u = "https://pixabay.com/api/videos/?" + urllib.parse.urlencode({"key": k["pixabay"], "q": q, "per_page": 15, "safesearch": "true"})
             for v in http_json(u).get("hits", []):
                 vs = v.get("videos", {}); best = vs.get("large") if vs.get("large", {}).get("url") else vs.get("medium", {})
                 out.append({"source": "pixabay", "id": str(v["id"]), "thumb": best.get("thumbnail") or vs.get("tiny", {}).get("thumbnail"), "dur": v.get("duration"),
-                            "w": best.get("width"), "h": best.get("height"), "dl": best.get("url"), "page": v.get("pageURL"), "author": v.get("user", ""), "license": "Pixabay Content License"})
+                            "w": best.get("width"), "h": best.get("height"), "dl": best.get("url"), "page": v.get("pageURL"), "author": v.get("user", ""), "license": "Pixabay Content License", "title": v.get("tags", "")})
         elif source == "commons":   # 위키미디어 공용: 키 없음. 퍼블릭 도메인·CC0·CC BY·CC BY-SA만(출처 표시 필요)
             u = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode({"action": "query", "format": "json", "generator": "search", "gsrsearch": f"{q} filetype:video",
                 "gsrnamespace": 6, "gsrlimit": 20, "prop": "imageinfo", "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 320})
@@ -217,7 +234,7 @@ def search(q, source, orient):
                 dt = (it.get("data") or [{}])[0]; th = next((l["href"] for l in it.get("links", []) if l.get("render") == "image"), None)
                 out.append({"source": "nasa", "id": dt.get("nasa_id", ""), "thumb": th, "dur": None, "w": None, "h": None, "dl": it.get("href"),
                             "page": f"https://images.nasa.gov/details/{urllib.parse.quote(dt.get('nasa_id', ''))}", "author": dt.get("center", "NASA"),
-                            "license": "NASA (public domain, check for third-party)", "title": dt.get("title", "")})
+                            "license": "NASA (public domain, check for third-party)", "title": dt.get("title", ""), "desc": (dt.get("description") or "")[:240]})
     except Exception as e:
         return {"error": f"검색 오류({source}): {e}"}
     return {"items": out}
@@ -261,7 +278,7 @@ def fetch(item, folder=None):
         os.replace(dst + ".part", dst)
     cf = os.path.join(d, "credits.json")
     cr = json.load(open(cf, encoding="utf-8")) if os.path.exists(cf) else {}
-    cr[name] = {k_: item.get(k_) for k_ in ("source", "id", "page", "author", "license", "title")}
+    cr[name] = {k_: item.get(k_) for k_ in ("source", "id", "page", "author", "license", "title", "ko")}
     json.dump(cr, open(cf, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     ids = import_paths([dst])
     for i in ids: DB[i]["credit"] = cr[name]
@@ -321,7 +338,8 @@ def script_from_media(channel, topic, ids, n_sent):
                 "- 사실은 널리 확인된 것만, 문장마다 근거(기관·논문·연도)를 적고, 확실하지 않으면 fact_source에 '확인 필요'.\n"
                 "answer 도구로 돌려줘: title, hook(첫 문장), clips_note(클립마다 보이는 것 한 줄과 주제 종이 맞는지), sentences(ko, en, clip, clip_in, fact_source)."}]
     for j, mid in enumerate(vids):
-        content.append({"type": "text", "text": f"C{j + 1}: {DB[mid]['name']} ({DB[mid]['dur']:.1f}초)"})
+        cr = DB[mid].get("credit") or {}
+        content.append({"type": "text", "text": f"C{j + 1}: {DB[mid]['name']} ({DB[mid]['dur']:.1f}초)" + (f" · 출처 설명: {cr.get('ko') or ''} {cr.get('title') or ''}" if cr else "")})
         for b in frames_b64(mid): content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}})
     r = claude(content, 8000, "media_script")
     if r.get("sentences"):
@@ -435,6 +453,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/search":
             j = self._body(); return self._json(search(j.get("q", ""), j.get("source", "pexels"), j.get("orient", "")))
         if p == "/api/wonder": return self._json(wonder())
+        if p == "/api/describe": return self._json(describe(self._body().get("items", [])[:40]))
         if p == "/api/fetch_pexels":   # API 키 없이: Pexels 영상 주소/번호로 바로 받기(11-06 Pexels 새 키 발급 중단)
             j = self._body(); m = re.findall(r"(\d{5,})", j.get("url", ""))
             if not m: return self._json({"error": "주소에서 영상 번호를 못 찾았어요"}, 400)

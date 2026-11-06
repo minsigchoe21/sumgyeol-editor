@@ -364,14 +364,36 @@ function scriptToSubs() {
   renderTL(); draw();
 }
 const SRC_NAME = { pexels: "Pexels", pixabay: "Pixabay", commons: "위키미디어", nasa: "NASA" };
+let FOUND = [];
 function showFound(items) {
+  FOUND = items;
   const esc = (x) => String(x ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
-  $("#findOut").innerHTML = items.map((it, i) => `<div class="fi"><img src="${esc(it.thumb)}" alt="" loading="lazy" title="${esc(it.title || it.kw || "")}"><div class="meta"><b>${SRC_NAME[it.source] || it.source}</b>${it.kw ? " · " + esc(it.kw) : ""}<br>${it.w ? it.w + "×" + it.h + " · " : ""}${it.dur ? it.dur + "초" : ""}<br><span title="${esc(it.license)}">${esc((it.license || "").slice(0, 28))}</span>${it.author ? "<br>" + esc(it.author.slice(0, 30)) : ""} <a href="${esc(it.page)}" target="_blank" style="color:#7fd0ff">원본</a></div><button data-i="${i}">받아서 넣기</button></div>`).join("") || '<p class="dim">없어요.</p>';
-  $("#findOut").querySelectorAll("[data-i]").forEach((b) => (b.onclick = async () => {
-    b.textContent = "받는 중…"; b.disabled = true; const f = await api("/api/fetch", { ...items[+b.dataset.i], folder: $("#folder")?.value.trim() || "" });
-    b.textContent = f.error ? "실패" : "받음 ✓"; if (f.error) b.title = f.error; loadMedia();
-  }));
+  $("#findOut").innerHTML = items.map((it, i) => `<div class="fi"><img src="${esc(it.thumb)}" alt="" loading="lazy" title="${esc(it.title || it.kw || "")}"><div class="meta"><div class="ko" data-ko="${i}" style="color:var(--fg);font-weight:700">…</div><b>${SRC_NAME[it.source] || it.source}</b>${it.w ? " · " + it.w + "×" + it.h : ""}${it.dur ? " · " + it.dur + "초" : ""}<br><span title="${esc(it.license)}">${esc((it.license || "").slice(0, 28))}</span>${it.author ? " · " + esc(it.author.slice(0, 24)) : ""} <a href="${esc(it.page)}" target="_blank" style="color:#7fd0ff">원본</a></div><button data-i="${i}">받아서 넣기</button></div>`).join("") || '<p class="dim">없어요.</p>';
+  $("#findOut").querySelectorAll("[data-i]").forEach((b) => (b.onclick = () => takeItem(+b.dataset.i, b)));
+  if (items.length) api("/api/describe", { items }).then((r) => {   // 한 줄 한국어 설명
+    (r.items || []).forEach((x) => { if (items[x.i]) { items[x.i].ko = x.ko; items[x.i].topic = x.topic; } const el = document.querySelector(`[data-ko="${x.i}"]`); if (el) el.textContent = x.ko || ""; });
+    document.querySelectorAll("[data-ko]").forEach((el) => { if (el.textContent === "…") el.textContent = items[+el.dataset.ko]?.title?.slice(0, 30) || ""; });
+  });
 }
+// 받으면 바로 대본 추천(11-06 "받은 것은 바로 대본을 추천해서 넣어 주면"): 받기가 끝나고 8초 동안 더 받지 않으면, 이 폴더 영상으로 대본을 추천받아 타임라인에 배치
+let autoT = null;
+async function takeItem(i, b) {
+  const it = FOUND[i];
+  if (!$("#topic").value.trim() && it.topic) $("#topic").value = it.topic;
+  if (!$("#folder").value.trim()) $("#folder").value = chPrefix() + ($("#topic").value.trim() || it.topic || it.kw || "새주제").replace(/\s+/g, "");
+  b.textContent = "받는 중…"; b.disabled = true;
+  const f = await api("/api/fetch", { ...it, folder: $("#folder").value.trim() });
+  b.textContent = f.error ? "실패" : "받음 ✓"; if (f.error) { b.title = f.error; return; }
+  loadMedia();
+  if ($("#autoSc").checked) { clearTimeout(autoT); $("#autoState").textContent = "더 받을 게 없으면 8초 뒤 대본 추천을 시작해요…"; autoT = setTimeout(autoScript, 8000); }
+}
+async function autoScript() {
+  await waitAllReady(); $("#autoState").textContent = "받은 영상으로 대본을 쓰는 중(1~2분)…";
+  SCRIPT = null; document.querySelector('[data-tab="script"]').click(); await $("#btnFromMedia").onclick();
+  if (SCRIPT?.script?.sentences) { placeScript(); $("#autoState").textContent = "대본을 추천해서 타임라인에 넣었어요 ✓ (대본 추천 탭에서 확인)"; }
+  else $("#autoState").textContent = "대본 추천을 못 했어요(대본 추천 탭의 안내 확인)";
+}
+async function waitAllReady() { for (let k = 0; k < 300; k++) { await loadMedia(); if (!Object.values(MEDIA).some((m) => m.status === "working")) return; await new Promise((r) => setTimeout(r, 1500)); } }
 $("#btnFind").onclick = async () => {
   $("#findOut").innerHTML = '<p class="dim">찾는 중…</p>';
   const r = await api("/api/search", { q: $("#q").value, source: $("#src").value, orient: $("#orient").value });

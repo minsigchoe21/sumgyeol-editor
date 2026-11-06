@@ -38,7 +38,9 @@
     <div id="tab-find" class="tab">
       <div class="row"><input id="q" placeholder="검색어(영어), 예: sea otter"><select id="src"><option value="pixabay">Pixabay</option><option value="commons">위키미디어 공용</option><option value="nasa">NASA</option><option value="pexels">Pexels(키 필요)</option></select></div>
       <div class="row"><select id="orient"><option value="">모든 방향</option><option value="portrait">세로</option><option value="landscape">가로</option></select><button id="btnFind">찾기</button></div>
-      <button id="btnWonder" style="width:100%;margin:4px 0 8px">✨ 신기한 영상 둘러보기</button>
+      <button id="btnWonder" style="width:100%;margin:4px 0 4px">✨ 신기한 영상 둘러보기</button>
+      <label style="display:flex;gap:6px;align-items:center;font-size:12px;margin:2px 0"><input id="autoSc" type="checkbox" checked style="width:auto"> 받으면 바로 대본 추천해서 넣기</label>
+      <div id="autoState" class="dim" style="font-size:12px;margin-bottom:6px"></div>
       <div id="findOut" class="grid"></div>
       <p class="dim" style="margin:14px 0 4px;font-size:12px">키 없이 Pexels 영상 받기: 영상 페이지 주소나 번호를 붙여 넣어요(여러 개는 줄바꿈)</p>
       <textarea id="pxUrls" style="width:100%;min-height:60px;background:#262b34;color:var(--fg);border:1px solid var(--line);border-radius:6px" placeholder="https://www.pexels.com/video/...-8104898/"></textarea>
