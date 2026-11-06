@@ -281,7 +281,7 @@ const folderOf = () => ($("#folder").value.trim() || chPrefix() + $("#topic").va
 $("#btnCollect").onclick = async () => {
   if (!$("#topic").value.trim()) { alert("주제를 먼저 적어 주세요"); return; }
   const folder = folderOf(); $("#folder").value = folder;
-  await api("/api/collect", { channel: $("#chSel").value, topic: $("#topic").value, n: +$("#nClip").value, orient: P.h > P.w ? "portrait" : "", folder });
+  await api("/api/collect", { channel: $("#chSel").value, topic: $("#topic").value, n: +$("#nClip").value, orient: P.h > P.w ? "portrait" : "", folder, ...condOpt() });
   const tick = async () => { const st = await api("/api/collect/status", { folder }); $("#colState").textContent = (st.state || "") + (st.keywords ? " · 검색어: " + st.keywords.join(", ") : ""); await loadMedia(); if (!st.done) setTimeout(tick, 2000); };
   tick();
 };
@@ -365,10 +365,18 @@ function scriptToSubs() {
 }
 const SRC_NAME = { pexels: "Pexels", pixabay: "Pixabay", commons: "위키미디어", nasa: "NASA" };
 let FOUND = [];
+const condOpt = () => ({ level: $("#condLv").value, review: $("#condRv").checked });
+const COND_COLOR = { free: "#7fe08a", nasa: "#7fd0ff", by: "#ffd54a", bysa: "#ffb347", review: "#ff8a65" };
+try { const cl = localStorage.getItem("condLv"); if (cl) $("#condLv").value = cl; } catch (e) {}
+$("#condLv").onchange = () => { try { localStorage.setItem("condLv", $("#condLv").value); } catch (e) {} };
+$("#btnCredits").onclick = async () => {
+  const r = await api("/api/credits_text", { folder: folderOf() });
+  modal(`<h3>출처 문구 — ${folderOf()}</h3><p class="dim" style="font-size:12px">업로드 설명란에 붙여 넣으세요. 출처 표시가 필요한 영상은 빠짐없이 들어 있어요.</p><textarea style="width:100%;min-height:220px;background:#262b34;color:var(--fg);border:1px solid var(--line);border-radius:6px">${r.text.replace(/</g, "&lt;")}</textarea>`);
+};
 function showFound(items) {
   FOUND = items;
   const esc = (x) => String(x ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
-  $("#findOut").innerHTML = items.map((it, i) => `<div class="fi"><img src="${esc(it.thumb)}" alt="" loading="lazy" title="${esc(it.title || it.kw || "")}"><div class="meta"><div class="ko" data-ko="${i}" style="color:var(--fg);font-weight:700">…</div><b>${SRC_NAME[it.source] || it.source}</b>${it.w ? " · " + it.w + "×" + it.h : ""}${it.dur ? " · " + it.dur + "초" : ""}<br><span title="${esc(it.license)}">${esc((it.license || "").slice(0, 28))}</span>${it.author ? " · " + esc(it.author.slice(0, 24)) : ""} <a href="${esc(it.page)}" target="_blank" style="color:#7fd0ff">원본</a></div><button data-i="${i}">받아서 넣기</button></div>`).join("") || '<p class="dim">없어요.</p>';
+  $("#findOut").innerHTML = items.map((it, i) => `<div class="fi"><img src="${esc(it.thumb)}" alt="" loading="lazy" title="${esc(it.title || it.kw || "")}"><div class="meta"><div class="ko" data-ko="${i}" style="color:var(--fg);font-weight:700">…</div><span style="display:inline-block;padding:0 5px;border-radius:4px;background:${COND_COLOR[it.cond] || "#888"};color:#111;font-weight:700">${esc(it.cond_ko || "")}</span><br><b>${SRC_NAME[it.source] || it.source}</b>${it.w ? " · " + it.w + "×" + it.h : ""}${it.dur ? " · " + it.dur + "초" : ""}<br><span title="${esc(it.license)}">${esc((it.license || "").slice(0, 28))}</span>${it.author ? " · " + esc(it.author.slice(0, 24)) : ""} <a href="${esc(it.page)}" target="_blank" style="color:#7fd0ff">원본</a></div><button data-i="${i}">받아서 넣기</button></div>`).join("") || '<p class="dim">없어요.</p>';
   $("#findOut").querySelectorAll("[data-i]").forEach((b) => (b.onclick = () => takeItem(+b.dataset.i, b)));
   if (items.length) api("/api/describe", { items }).then((r) => {   // 한 줄 한국어 설명
     (r.items || []).forEach((x) => { if (items[x.i]) { items[x.i].ko = x.ko; items[x.i].topic = x.topic; } const el = document.querySelector(`[data-ko="${x.i}"]`); if (el) el.textContent = x.ko || ""; });
@@ -396,13 +404,13 @@ async function autoScript() {
 async function waitAllReady() { for (let k = 0; k < 300; k++) { await loadMedia(); if (!Object.values(MEDIA).some((m) => m.status === "working")) return; await new Promise((r) => setTimeout(r, 1500)); } }
 $("#btnFind").onclick = async () => {
   $("#findOut").innerHTML = '<p class="dim">찾는 중…</p>';
-  const r = await api("/api/search", { q: $("#q").value, source: $("#src").value, orient: $("#orient").value });
+  const r = await api("/api/search", { q: $("#q").value, source: $("#src").value, orient: $("#orient").value, ...condOpt() });
   if (r.error) { $("#findOut").innerHTML = `<p style="color:#ff8a65">${r.error}</p>`; return; }
   showFound(r.items);
 };
 $("#btnWonder").onclick = async () => {
   $("#findOut").innerHTML = '<p class="dim">신기한 영상을 여러 곳에서 찾는 중(20~40초)…</p>';
-  const r = await api("/api/wonder", {}); showFound(r.items || []);
+  const r = await api("/api/wonder", condOpt()); showFound(r.items || []);
 };
 $("#btnKeys").onclick = () => {
   modal(`<h3>키 설정</h3><p class="dim" style="font-size:12px">여기 넣은 키는 이 PC의 키 파일에만 저장돼요(채팅·Drive에 안 올라가요). 비워 두면 그대로 둬요.</p>

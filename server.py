@@ -196,6 +196,28 @@ def recommend(channel, topic, n_sent):
               "search(무료 실사 영상 Pexels/Pixabay 영어 검색어 1~3개, 실제로 있을 법한 구체적인 장면), fact_source(근거: 기관·논문·연도, 모르면 '확인 필요').")
     return claude(prompt, 6000, "recommend")
 
+# ---------------------------------------------------------------- 사용 조건(11-06 "사용조건까지 다 고려해서 영상 추천") ----
+# cond: free(조건 없음) < nasa(퍼블릭 도메인, 로고·제3자 주의) < by(출처 표시) < bysa(출처 + 같은 조건) ; review = 라이선스 검토 전
+COND_KO = {"free": "조건 없음", "nasa": "퍼블릭 도메인(NASA 로고 금지)", "by": "출처 표시 필수", "bysa": "출처 + 같은 조건 표시", "review": "검토 전 — 원본 확인"}
+COND_RANK = {"free": 0, "nasa": 1, "by": 2, "bysa": 3, "review": 4}
+def cond_of(it):
+    lic = (it.get("license") or "").lower()
+    if "검토 전" in lic: return "review"
+    if it["source"] in ("pexels", "pixabay"): return "free"
+    if it["source"] == "nasa": return "nasa"
+    if re.match(r"(public domain|pd|cc0)", lic): return "free"
+    if "sa" in re.split(r"[\s-]", lic): return "bysa"
+    return "by"
+def allowed(it, level, review_ok):
+    c = it["cond"]
+    if c == "review" and not review_ok: return False
+    if level == "free": return c in ("free", "nasa")
+    return True
+def annotate(items, level="attrib", review_ok=False):
+    for it in items: it["cond"] = cond_of(it); it["cond_ko"] = COND_KO[it["cond"]]
+    items = [it for it in items if allowed(it, level, review_ok)]
+    items.sort(key=lambda it: COND_RANK[it["cond"]]); return items
+
 def search(q, source, orient):
     k = keys(); out = []
     try:
@@ -243,17 +265,17 @@ WONDER = ["bioluminescence", "murmuration starlings", "mimic octopus", "cuttlefi
           "coral spawning", "humpback whale breach", "slime mold timelapse", "lightning storm slow motion", "glacier calving", "sardine run", "manta ray",
           "hummingbird slow motion", "mantis shrimp", "firefly synchronous", "sea otter", "chameleon tongue", "leafcutter ants", "geyser eruption", "sand dunes wind",
           "space station earth view", "solar flare", "comet", "deep sea creature", "seahorse", "fungi growth timelapse", "dragonfly emerging", "salmon run"]
-def wonder(n_kw=6):
+def wonder(n_kw=6, level="attrib", review_ok=False):
     """✨ 신기한 영상 둘러보기: 신기한 자연 현상 검색어 몇 개를 골라 모든 무료 출처에서 찾아요."""
     import random
     k = keys(); srcs = ["commons", "nasa"] + [x for x in ("pixabay", "pexels") if k.get(x)]
     out = []
     for kw in random.sample(WONDER, n_kw):
         for src in srcs:
-            items = search(kw, src, "").get("items", [])[:3]
+            items = annotate(search(kw, src, "").get("items", []), level, review_ok)[:3]
             for it in items: it["kw"] = kw
             out += items
-    random.shuffle(out); return {"items": out, "sources": srcs}
+    random.shuffle(out); out.sort(key=lambda it: COND_RANK[it["cond"]]); return {"items": out, "sources": srcs}
 
 UA = "sumgyeol-editor/1.0 (personal shorts editor)"
 def nasa_file(href):
@@ -278,7 +300,8 @@ def fetch(item, folder=None):
         os.replace(dst + ".part", dst)
     cf = os.path.join(d, "credits.json")
     cr = json.load(open(cf, encoding="utf-8")) if os.path.exists(cf) else {}
-    cr[name] = {k_: item.get(k_) for k_ in ("source", "id", "page", "author", "license", "title", "ko")}
+    item.setdefault("cond", cond_of(item))
+    cr[name] = {k_: item.get(k_) for k_ in ("source", "id", "page", "author", "license", "title", "ko", "cond")}
     json.dump(cr, open(cf, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     ids = import_paths([dst])
     for i in ids: DB[i]["credit"] = cr[name]
@@ -286,7 +309,7 @@ def fetch(item, folder=None):
 
 # ---------------------------------------------------------------- 영상 먼저 → 대본 (11-06 "영상을 찾아서 - 대본을 추천하는 방식으로") ----
 COLLECT = {}   # 진행 상황
-def collect(channel, topic, n, orient, folder):
+def collect(channel, topic, n, orient, folder, level="attrib", review_ok=False):
     """① 주제로 검색어를 만들고(Claude, 키 없으면 주제 그대로) Pexels/Pixabay에서 영상을 모아 sources\\<folder>\\ 에 받아요."""
     COLLECT[folder] = {"state": "검색어 만드는 중", "ids": [], "done": False}
     kws = [topic]
@@ -300,7 +323,7 @@ def collect(channel, topic, n, orient, folder):
         for src in ("pixabay", "pexels", "commons", "nasa"):
             if src in ("pixabay", "pexels") and not k.get(src): continue
             COLLECT[folder]["state"] = f"찾는 중: {kw} ({src})"
-            res = search(kw, src, orient).get("items", []) or search(kw, src, "").get("items", [])
+            res = annotate(search(kw, src, orient).get("items", []) or search(kw, src, "").get("items", []), level, review_ok)
             c = 0
             for it in res:
                 if c >= per or len(COLLECT[folder]["ids"]) >= n: break
@@ -350,6 +373,27 @@ def script_from_media(channel, topic, ids, n_sent):
             try: x["media"] = vids[int(str(x.get("clip", "C1")).lstrip("Cc")) - 1]
             except Exception: pass
     return r
+
+LIC_URL = {"cc by 2.0": "https://creativecommons.org/licenses/by/2.0/", "cc by 2.5": "https://creativecommons.org/licenses/by/2.5/", "cc by 3.0": "https://creativecommons.org/licenses/by/3.0/",
+           "cc by 4.0": "https://creativecommons.org/licenses/by/4.0/", "cc by-sa 2.0": "https://creativecommons.org/licenses/by-sa/2.0/", "cc by-sa 3.0": "https://creativecommons.org/licenses/by-sa/3.0/",
+           "cc by-sa 4.0": "https://creativecommons.org/licenses/by-sa/4.0/"}
+def credits_text(folder):
+    """업로드 설명란용 출처 문구. 출처 표시가 필요한 것(CC BY·BY-SA)은 작가·라이선스·링크를 꼭, 나머지는 한 줄로 묶어요."""
+    cf = os.path.join(SOURCES, folder, "credits.json")
+    if not os.path.exists(cf): return "(이 폴더에서 받은 영상의 출처 기록이 없어요)"
+    cr = json.load(open(cf, encoding="utf-8")); must, free = [], {}
+    for name, c in cr.items():
+        cond = c.get("cond") or "free"
+        if cond in ("by", "bysa", "review"):
+            lic = (c.get("license") or "").replace(" ⚠검토 전", ""); url = LIC_URL.get(lic.lower().strip(), "")
+            must.append(f'- "{c.get("title") or name}" — {c.get("author") or "작가 미상"}, {lic}{" (" + url + ")" if url else ""}, {c.get("page") or ""}{" · 편집됨" if cond != "free" else ""}')
+        else:
+            src = {"pexels": "Pexels", "pixabay": "Pixabay", "nasa": "NASA", "commons": "Wikimedia Commons(퍼블릭 도메인)"}.get(c.get("source"), c.get("source"))
+            free.setdefault(src, []).append(str(c.get("id")))
+    lines = ["[영상 출처]"] + must + [f"- {src}: {', '.join(ids)}" for src, ids in free.items()]
+    if any("sa" in (c.get("license") or "").lower().split("-") or "by-sa" in (c.get("license") or "").lower() for c in cr.values()):
+        lines.append("※ CC BY-SA 영상을 고친 부분은 같은 라이선스(CC BY-SA)를 따릅니다.")
+    return "\n".join(lines)
 
 SAFE = re.compile(r"[^0-9A-Za-z가-힣_\-. ]")
 def proj_path(name): return os.path.join(PROJ, SAFE.sub("_", name).strip() or "제목없음") + ".shum"
@@ -438,7 +482,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/collect":
             j = self._body(); folder = SAFE.sub("_", j.get("folder") or j.get("topic", "새주제")).strip()
             if COLLECT.get(folder, {}).get("done") is False: return self._json({"folder": folder, "busy": True})
-            threading.Thread(target=collect, args=(j.get("channel", "jigu"), j.get("topic", ""), int(j.get("n", 12)), j.get("orient", ""), folder), daemon=True).start()
+            threading.Thread(target=collect, args=(j.get("channel", "jigu"), j.get("topic", ""), int(j.get("n", 12)), j.get("orient", ""), folder, j.get("level", "attrib"), bool(j.get("review"))), daemon=True).start()
             return self._json({"folder": folder})
         if p == "/api/save_script":   # 대본을 sources\<folder>\대본.json·대본.txt로 저장(Claude가 내레이션 만들 때 읽어요)
             j = self._body(); folder = SAFE.sub("_", j.get("folder", "새주제")).strip(); d = os.path.join(SOURCES, folder); os.makedirs(d, exist_ok=True)
@@ -451,8 +495,12 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/recommend":
             j = self._body(); return self._json(recommend(j.get("channel"), j.get("topic", ""), int(j.get("n", 14))))
         if p == "/api/search":
-            j = self._body(); return self._json(search(j.get("q", ""), j.get("source", "pexels"), j.get("orient", "")))
-        if p == "/api/wonder": return self._json(wonder())
+            j = self._body(); r = search(j.get("q", ""), j.get("source", "pixabay"), j.get("orient", ""))
+            if "items" in r: r["items"] = annotate(r["items"], j.get("level", "attrib"), bool(j.get("review")))
+            return self._json(r)
+        if p == "/api/wonder": j = self._body(); return self._json(wonder(6, j.get("level", "attrib"), bool(j.get("review"))))
+        if p == "/api/credits_text":   # 업로드 설명란에 붙일 출처 문구(이 폴더에서 받은 것 전부)
+            folder = self._body().get("folder") or "_받은영상"; return self._json({"text": credits_text(folder)})
         if p == "/api/describe": return self._json(describe(self._body().get("items", [])[:40]))
         if p == "/api/fetch_pexels":   # API 키 없이: Pexels 영상 주소/번호로 바로 받기(11-06 Pexels 새 키 발급 중단)
             j = self._body(); m = re.findall(r"(\d{5,})", j.get("url", ""))
