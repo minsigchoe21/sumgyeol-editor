@@ -542,6 +542,7 @@ async function checkUpdate() {
     if (P.clips.length) await save();
     const ov = document.createElement("div"); ov.id = "updOv"; ov.textContent = `새 버전(${r.remote.slice(4)})으로 바꾸는 중… 잠깐만요`; document.body.appendChild(ov);
     const a = await api("/api/update/apply", {}); if (a.error) { ov.textContent = a.error; setTimeout(() => ov.remove(), 4000); return; }
+    if (!a.restart) { location.reload(); return; }   // 화면만 바뀐 업데이트
     for (let i = 0; i < 60; i++) { await new Promise((res) => setTimeout(res, 1000)); try { const v = await api("/api/version"); if (v.version === r.remote) { location.reload(); return; } } catch (e) {} }
     ov.textContent = "다시 켜지지 않았어요. START.bat을 다시 실행해 주세요.";
   } catch (e) {}

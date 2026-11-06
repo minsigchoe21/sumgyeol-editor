@@ -576,9 +576,12 @@ class H(BaseHTTPRequestHandler):
             json.dump(k, open(KEYF, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
             return self._json({n: bool(k.get(n)) for n in ("anthropic", "pexels", "pixabay")})
         if p == "/api/update/apply":
-            try: apply_update()
-            except Exception as e: return self._json({"error": f"업데이트 실패: {e}"}, 500)
-            self._json({"ok": True, "version": local_version()}); threading.Thread(target=restart, daemon=True).start(); return
+            try: changed = apply_update()
+            except Exception as e: log(f"update failed: {e}"); return self._json({"error": f"업데이트 실패: {e}"}, 500)
+            need = any(c.endswith(".py") for c in changed)   # 화면 파일만 바뀌면 서버는 그대로, 새로고침만
+            self._json({"ok": True, "version": local_version(), "restart": need})
+            if need: log("restarting for " + ", ".join(c for c in changed if c.endswith('.py'))); threading.Thread(target=restart, daemon=True).start()
+            return
         if p == "/api/collect":
             j = self._body(); folder = SAFE.sub("_", j.get("folder") or j.get("topic", "새주제")).strip()
             if COLLECT.get(folder, {}).get("done") is False: return self._json({"folder": folder, "busy": True})
@@ -635,7 +638,7 @@ def apply_update():
     import zipfile, io
     sha = REMOTE_SHA or (remote_version() and REMOTE_SHA)
     with urllib.request.urlopen(f"https://codeload.github.com/{REPO}/zip/{sha}", timeout=60) as r: data = r.read()
-    z = zipfile.ZipFile(io.BytesIO(data)); top = z.namelist()[0].split("/")[0]
+    z = zipfile.ZipFile(io.BytesIO(data)); top = z.namelist()[0].split("/")[0]; changed = []
     for n in z.namelist():
         if n.endswith("/"): continue
         rel = n[len(top) + 1:]
@@ -643,10 +646,21 @@ def apply_update():
         dst = os.path.join(ROOT, *rel.split("/"))
         if rel == "START.bat": dst = os.path.join(ROOT, "START.new.bat")   # 실행 중인 bat은 안 건드림
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        with open(dst + ".tmp", "wb") as f: f.write(z.read(n))
-        os.replace(dst + ".tmp", dst)
+        data_n = z.read(n)
+        try:
+            if open(dst, "rb").read() == data_n: continue   # 같으면 건드리지 않음
+        except Exception: pass
+        changed.append(rel)
+        for k_ in range(10):   # 구글 드라이브가 잠깐 잠가도 다시 시도
+            try:
+                with open(dst + ".tmp", "wb") as f: f.write(data_n)
+                os.replace(dst + ".tmp", dst); break
+            except PermissionError: time.sleep(0.5)
+        else: raise RuntimeError(f"{rel}을(를) 쓸 수 없어요(드라이브가 잠금 중)")
     sb, nb = os.path.join(ROOT, "START.bat"), os.path.join(ROOT, "START.new.bat")
     if os.path.exists(nb) and os.path.exists(sb) and open(sb, "rb").read() == open(nb, "rb").read(): os.remove(nb)
+    log("update applied: " + ", ".join(changed)); return changed
+
 RESTART = False
 def restart():   # 응답을 보낸 뒤 서버를 멈추고 종료 코드 3으로 나가요 → 감독 프로세스가 새 코드로 다시 켜요
     global RESTART
@@ -686,7 +700,7 @@ if __name__ == "__main__":
     try:
         for m in DB.values():   # 끊겼던 작업 다시
             if m.get("status") == "working": threading.Thread(target=make_assets, args=(m["id"],), daemon=True).start()
-        s = serve()
+        s = serve(); log(f"child start {local_version()} pid {os.getpid()}")
         url = f"http://localhost:{PORT}"; print("숨결 편집기:", url, local_version(), "(이 창을 닫으면 꺼져요)", flush=True)
         if "--no-browser" not in sys.argv: threading.Timer(0.8, lambda: webbrowser.open(url)).start()
         try: s.serve_forever()
