@@ -206,7 +206,7 @@ def search(q, source, orient):
             for pg in sorted(pages.values(), key=lambda x: x.get("index", 0)):
                 ii = (pg.get("imageinfo") or [{}])[0]; em = ii.get("extmetadata", {})
                 lic = re.sub("<[^>]+>", "", em.get("LicenseShortName", {}).get("value", "")).strip()
-                if not re.match(r"(?i)(public domain|pd|cc0|cc[- ]by)", lic) or re.search(r"(?i)\bnc\b|nd", lic): continue
+                if not re.match(r"(?i)(public domain|pd|cc0|cc[- ]by)", lic) or re.search(r"(?i)(^|[\s-])(nc|nd)([\s-]|$)", lic): continue
                 if (ii.get("duration") or 99) < 3: continue
                 out.append({"source": "commons", "id": str(pg["pageid"]), "thumb": ii.get("thumburl"), "dur": round(ii.get("duration") or 0, 1), "w": ii.get("width"), "h": ii.get("height"),
                             "dl": ii.get("url"), "page": ii.get("descriptionurl"), "author": re.sub("<[^>]+>", "", em.get("Artist", {}).get("value", ""))[:80].strip(),
