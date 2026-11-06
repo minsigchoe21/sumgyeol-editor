@@ -318,6 +318,15 @@ function togglePlay(on = !playing) {
   if (playing) { if (AC && AC.state !== "running") AC.resume(); if (t >= projDur() - 0.01) t = 0; t0 = t; wall0 = performance.now(); sync(true); } else { for (const id in EL) EL[id].pause && EL[id].pause(); }
 }
 $("#btnPlay").onclick = () => { togglePlay(); if (playing) setTimeout(() => { const w = soundCheck(); if (w) flash("🔇 " + w); }, 600); };
+async function soundDiag() {   // 🔊 소리 점검: 삐 소리 + 소리 클립 상태
+  const ctx = new AudioContext(); const o = ctx.createOscillator(); const g2 = ctx.createGain(); g2.gain.value = 0.15; o.frequency.value = 660; o.connect(g2); g2.connect(ctx.destination); o.start(); setTimeout(() => { o.stop(); ctx.close(); }, 400);
+  const rows = P.clips.filter((c) => c.kind === "audio" || (c.kind === "video" && (c.vol ?? 0) > 0)).slice(0, 12).map((c) => {
+    const m = MEDIA[c.media], e = m ? EL[m.id] : null;
+    return `<tr><td>${c.track}</td><td>${(m?.name || c.src || "?").slice(0, 28)}</td><td>${fmt(c.start)}</td><td>${c.vol ?? 1}</td><td>${m ? m.status : "연결 안 됨"}</td><td>${e ? `rs${e.readyState} ${e.error ? "오류" + e.error.code : ""} ${e.muted ? "음소거" : ""} v${(+e.volume).toFixed(2)}` : "-"}</td></tr>`; }).join("");
+  modal(`<h3>🔊 소리 점검</h3><p>방금 <b>"삐"</b> 소리가 들렸나요? 안 들렸으면 PC·브라우저 소리 문제예요(출력 장치, 탭 음소거).</p>
+  <p class="dim" style="font-size:12px">오디오 처리: ${AC ? AC.state : "기본"} · 재생 위치 ${fmt(t)}</p><table style="font-size:11px;width:100%"><tr><th>트랙</th><th>파일</th><th>시작</th><th>음량</th><th>상태</th><th>재생기</th></tr>${rows || '<tr><td colspan=6>소리 클립이 없어요</td></tr>'}</table>
+  <p class="dim" style="font-size:12px">이 창을 캡처해서 Claude에게 보내 주세요.</p>`);
+}
 function soundCheck() {   // 소리가 안 들릴 때 원인 알려 주기(11-07 "소리가 안 들려")
   const a = P.clips.filter((c) => c.kind === "audio" && t >= c.start && t < c.start + c.dur);
   if (!a.length) return "지금 위치에 소리 트랙 클립이 없어요.";
@@ -733,7 +742,7 @@ async function exportPreview() {
   const r = await fetch(`/api/export_upload?name=${encodeURIComponent(P.name)}&folder=${encodeURIComponent(projFolder())}`, { method: "POST", body: blob }).then((x) => x.json());
   ov.textContent = r.error ? "실패: " + r.error : "✓ 미리보기 저장: " + r.path; setTimeout(() => ov.remove(), 8000);
 }
-$("#btnExport").onclick = exportPreview;
+$("#btnExport").onclick = exportPreview; $("#btnSnd").onclick = soundDiag;
 
 // ------------------------------------------------------------ 시작 ----
 window.ed = { get P() { return P; }, set P(v) { P = v; afterLoad(); }, addMediaClip, seek, togglePlay, MEDIA: () => MEDIA, loadMedia };
