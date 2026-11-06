@@ -310,9 +310,15 @@ addEventListener("keydown", (e) => {
 // ------------------------------------------------------------ 프로젝트 ----
 async function relink() {   // 다른 PC에서 저장한 프로젝트면 src로 미디어 다시 연결
   const miss = [...new Set(P.clips.filter((c) => c.media && !MEDIA[c.media] && c.src).map((c) => c.src))]; if (!miss.length) return;
+  const need = (P.fetch || []).filter((f) => miss.includes(f.src));
+  if (need.length) {   // Claude가 만든 초안: 영상·내레이션을 이 PC가 직접 받아요
+    await api("/api/prefetch", { fetch: need }); const ov = document.createElement("div"); ov.id = "updOv"; document.body.appendChild(ov);
+    for (;;) { const st = await api("/api/prefetch/status"); ov.textContent = "초안 재료 " + (st.state || "받는 중…"); if (st.done) break; await new Promise((r) => setTimeout(r, 1500)); }
+    setTimeout(() => ov.remove(), 2500);
+  }
   const map = await api("/api/resolve", { srcs: miss }); await loadMedia();
   P.clips.forEach((c) => { if (c.media && !MEDIA[c.media] && map[c.src]) c.media = map[c.src]; });
-  const bad = P.clips.filter((c) => c.media && !MEDIA[c.media]).length; if (bad) alert(`원본을 못 찾은 클립 ${bad}개 — 01_쇼츠\\sources 에 원본이 있는지 확인하세요.`);
+  await waitAllReady(); const bad = P.clips.filter((c) => c.media && !MEDIA[c.media]).length; if (bad) alert(`원본을 못 찾은 클립 ${bad}개 — 01_쇼츠\\sources 에 원본이 있는지 확인하세요.`);
   renderTL(); draw();
 }
 function afterLoad() {

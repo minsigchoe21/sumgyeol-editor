@@ -445,6 +445,30 @@ def credits_text(folder):
         lines.append("※ CC BY-SA 영상을 고친 부분은 같은 라이선스(CC BY-SA)를 따릅니다.")
     return "\n".join(lines)
 
+# ---------------------------------------------------------------- Claude 초안 프로젝트의 자동 받기(11-06 "너가 일차적으로 취합해서 만들고 내가 편집") ----
+PREFETCH = {"state": "", "done": True, "n": 0, "i": 0, "fail": []}
+def prefetch(items):
+    """프로젝트의 fetch 목록: [{src: 'sources/폴더/파일', url, credit}] — 없는 파일만 받아 그 자리에 두고 출처를 기록해요."""
+    PREFETCH.update(state="받는 중", done=False, n=len(items), i=0, fail=[])
+    for it in items:
+        PREFETCH["i"] += 1
+        dst = abs_of(it["src"])
+        if os.path.exists(dst): continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        PREFETCH["state"] = f"받는 중 {PREFETCH['i']}/{len(items)}: {os.path.basename(dst)}"
+        try:
+            url = it["url"]
+            if url.startswith("nasa:"): url = nasa_file(url[5:])
+            req = urllib.request.Request(url, headers={"User-Agent": UA if "wikimedia" in url or "nasa" in url else "Mozilla/5.0 (sumgyeol-editor)"})
+            with urllib.request.urlopen(req, timeout=900) as r, open(dst + ".part", "wb") as f: shutil.copyfileobj(r, f, 1 << 20)
+            os.replace(dst + ".part", dst)
+            if it.get("credit"):
+                cf = os.path.join(os.path.dirname(dst), "credits.json"); cr = json.load(open(cf, encoding="utf-8")) if os.path.exists(cf) else {}
+                cr[os.path.basename(dst)] = it["credit"]; json.dump(cr, open(cf, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        except Exception as e:
+            PREFETCH["fail"].append(f"{os.path.basename(dst)}: {e}")
+    PREFETCH.update(state=f"다 받았어요({len(items) - len(PREFETCH['fail'])}/{len(items)})", done=True)
+
 SAFE = re.compile(r"[^0-9A-Za-z가-힣_\-. ]")
 def proj_path(name): return os.path.join(PROJ, SAFE.sub("_", name).strip() or "제목없음") + ".shum"
 
@@ -509,10 +533,19 @@ class H(BaseHTTPRequestHandler):
         p = urlparse(self.path).path
         if p == "/api/pick": return self._json({"ids": import_paths(pick_files())})
         if p == "/api/import": return self._json({"ids": import_paths(self._body().get("paths", []))})
+        if p == "/api/prefetch":
+            items = self._body().get("fetch", [])
+            if PREFETCH["done"]: threading.Thread(target=prefetch, args=(items,), daemon=True).start()
+            return self._json({"ok": True})
+        if p == "/api/prefetch/status": return self._json(PREFETCH)
         if p == "/api/resolve":   # 다른 PC에서 만든 프로젝트: 클립의 src(01_쇼츠 기준 상대 경로)로 다시 가져오기
             out = {}
             for src in self._body().get("srcs", []):
                 ids = import_paths([src]); out[src] = ids[0] if ids else None
+                cf = os.path.join(os.path.dirname(abs_of(src)), "credits.json")   # 받은 출처를 미디어에 붙여요
+                if ids and os.path.exists(cf):
+                    c = json.load(open(cf, encoding="utf-8")).get(os.path.basename(src))
+                    if c: DB[ids[0]]["credit"] = c; save_db()
             return self._json(out)
         if p == "/api/project":
             j = self._body(); f = proj_path(j.get("name", "제목없음")); tmp = f + ".tmp"
