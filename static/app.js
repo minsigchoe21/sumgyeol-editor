@@ -315,9 +315,17 @@ function loop() {
 }
 function togglePlay(on = !playing) {
   playing = on; $("#btnPlay").textContent = playing ? "❚❚" : "▶";
-  if (playing) { if (t >= projDur() - 0.01) t = 0; t0 = t; wall0 = performance.now(); sync(true); } else { for (const id in EL) EL[id].pause && EL[id].pause(); }
+  if (playing) { if (AC && AC.state !== "running") AC.resume(); if (t >= projDur() - 0.01) t = 0; t0 = t; wall0 = performance.now(); sync(true); } else { for (const id in EL) EL[id].pause && EL[id].pause(); }
 }
-$("#btnPlay").onclick = () => togglePlay();
+$("#btnPlay").onclick = () => { togglePlay(); if (playing) setTimeout(() => { const w = soundCheck(); if (w) flash("🔇 " + w); }, 600); };
+function soundCheck() {   // 소리가 안 들릴 때 원인 알려 주기(11-07 "소리가 안 들려")
+  const a = P.clips.filter((c) => c.kind === "audio" && t >= c.start && t < c.start + c.dur);
+  if (!a.length) return "지금 위치에 소리 트랙 클립이 없어요.";
+  const miss = a.filter((c) => !MEDIA[c.media]); if (miss.length) return "소리 파일이 연결되지 않았어요(" + (miss[0].src || "?") + "). 열기로 프로젝트를 다시 열어 주세요.";
+  const wk = a.filter((c) => MEDIA[c.media].status !== "ready"); if (wk.length) return "소리 파일을 준비하는 중이에요. 잠시 뒤 다시 재생해 보세요.";
+  const mute = a.filter((c) => (c.vol ?? 1) === 0); if (mute.length === a.length) return "소리 클립 음량이 0이에요(속성 칸 음량).";
+  return "";
+}
 requestAnimationFrame(loop);
 
 // ------------------------------------------------------------ 키보드 ----
