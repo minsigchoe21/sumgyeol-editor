@@ -195,8 +195,17 @@ function fillGaps() {
   for (let i = 1; i < v.length; i++) { const a = v[i - 1], b = v[i], g = b.start - (a.start + a.dur); if (g > 0.01) { fillGap(a, b, g); n++; } }
   renderTL(); draw(); dirty(); flash(n ? `빈틈 ${n}곳을 메웠어요(자막 싱크 그대로)` : "빈틈이 없어요");
 }
-function closeGaps() {   // 영상 트랙 빈틈 모두 없애기
-  snap(); let s0 = 0; P.clips.filter((x) => x.track === "V1").sort((a, b) => a.start - b.start).forEach((x) => { const ov = x.fadeIn && x.start < s0 ? Math.min(x.fadeIn, s0 - x.start) : 0; x.start = Math.max(0, s0 - ov); s0 = x.start + x.dur; }); renderTL(); draw(); flash("빈틈을 없앴어요");
+function rippleRange(a, b) {   // [a, b] 시간을 모든 트랙에서 빼고 뒤를 당겨요(싱크 유지)
+  for (const tr of ["T1", "V1", "A1"]) cutRange(tr, a, b);
+  P.clips.forEach((x) => { if (x.start >= b - 1e-3) x.start -= (b - a); });
+}
+function closeGaps() {   // 당겨 붙이기(11-07): 고른 클립의 트랙(없으면 글자 트랙)에서 빈틈을 찾아, 그 시간만큼 모든 트랙을 함께 당겨요
+  const tr = clipById(sel)?.track || "T1"; const name = { T1: "글자", V1: "영상", A1: "소리" }[tr];
+  const cs = P.clips.filter((x) => x.track === tr).sort((p, q) => p.start - q.start); const gaps = [];
+  let end = 0; for (const x of cs) { if (x.start > end + 0.02) gaps.push([end, x.start]); end = Math.max(end, x.start + x.dur); }
+  if (!gaps.length) { flash(`${name} 트랙에 빈틈이 없어요`); return; }
+  snap(); gaps.reverse().forEach(([a, b]) => rippleRange(a, b));
+  renderTL(); draw(); dirty(); flash(`${name} 트랙 빈틈 ${gaps.length}곳을 당겨 붙였어요(영상·소리도 같이)`);
 }
 function splitAtRaw(c, at) { const k = at - c.start, n = { ...c, id: uid(), start: at, in: c.in + k * (c.speed || 1), dur: c.dur - k, fadeIn: 0 }; c.dur = k; c.fadeOut = 0; P.clips.push(n); return n; }
 function setSpeed(c, v) {   // 슬로모션·빠르게: 원본 구간은 그대로 두고 길이가 바뀌어요
