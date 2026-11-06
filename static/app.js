@@ -95,6 +95,9 @@ function renderTL() {
     tracks.appendChild(row);
   }
   $("#tdur").textContent = fmt(projDur()); placeHead();
+  // 문장 탭이 열려 있으면 같이 새로 그리기(11-07 "타임라인에서 글자를 삭제하면 반영이 안 된다"). 문장 탭에서 글을 치는 중이면 건드리지 않음
+  const st = document.getElementById("tab-sent");
+  if (st && st.classList.contains("on") && !st.contains(document.activeElement) && typeof renderSents === "function") { clearTimeout(window._rsT); window._rsT = setTimeout(renderSents, 50); }
 }
 function clipEl(c) {
   const d = document.createElement("div"); d.className = `clip ${c.kind}${c.id === sel ? " sel" : ""}`;
