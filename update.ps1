@@ -5,7 +5,8 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = 'minsigchoe21/sumgyeol-editor'
 try {
   $local = if (Test-Path "$here\VERSION") { (Get-Content "$here\VERSION" -Raw).Trim() } else { '' }
-  $sha = (Invoke-WebRequest "https://api.github.com/repos/$repo/commits/main" -Headers @{Accept='application/vnd.github.sha'} -UseBasicParsing -TimeoutSec 8).Content.Trim()
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  $sha = (Invoke-RestMethod "https://api.github.com/repos/$repo/commits/main" -Headers @{'User-Agent'='sumgyeol-editor'} -TimeoutSec 8).sha
   $remote = (Invoke-WebRequest "https://raw.githubusercontent.com/$repo/$sha/VERSION" -UseBasicParsing -TimeoutSec 8).Content.Trim()
   if ($remote -eq $local) { Write-Host "[업데이트] 최신판이에요 ($local)"; exit 0 }
   Write-Host "[업데이트] 새 버전 $remote 받는 중... (지금 $local)"
