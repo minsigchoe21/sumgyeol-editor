@@ -350,6 +350,13 @@ class H(BaseHTTPRequestHandler):
             j = self._body(); f = proj_path(j.get("name", "제목없음")); tmp = f + ".tmp"
             json.dump(j, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=1); os.replace(tmp, f)
             return self._json({"ok": True, "path": f})
+        if p == "/api/keys/set":   # 편집기 화면에서 키 넣기 → 이 PC의 키 파일에만 저장(밖으로 안 나감)
+            j = self._body(); k = keys()
+            for n in ("anthropic", "pexels", "pixabay"):
+                v = (j.get(n) or "").strip()
+                if v: k[n] = v
+            json.dump(k, open(KEYF, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            return self._json({n: bool(k.get(n)) for n in ("anthropic", "pexels", "pixabay")})
         if p == "/api/update/apply":
             try: apply_update()
             except Exception as e: return self._json({"error": f"업데이트 실패: {e}"}, 500)

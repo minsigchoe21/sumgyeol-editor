@@ -373,6 +373,14 @@ $("#btnFind").onclick = async () => {
     b.textContent = f.error ? "실패" : "받음 ✓"; loadMedia(); document.querySelector('[data-tab="media"]').click();
   }));
 };
+$("#btnKeys").onclick = () => {
+  modal(`<h3>키 설정</h3><p class="dim" style="font-size:12px">여기 넣은 키는 이 PC의 키 파일에만 저장돼요(채팅·Drive에 안 올라가요). 비워 두면 그대로 둬요.</p>
+  <label>Pexels API 키 <a href="https://www.pexels.com/api/" target="_blank" style="color:#7fd0ff">받기</a><input id="kPx" type="password" style="width:100%"></label>
+  <label>Pixabay API 키 <a href="https://pixabay.com/api/docs/" target="_blank" style="color:#7fd0ff">받기</a><input id="kPb" type="password" style="width:100%"></label>
+  <label>Claude API 키 <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:#7fd0ff">받기</a><input id="kCl" type="password" style="width:100%"></label>
+  <div class="row end"><button id="kSave">저장</button></div>`);
+  $("#kSave").onclick = async () => { await api("/api/keys/set", { pexels: $("#kPx").value, pixabay: $("#kPb").value, anthropic: $("#kCl").value }); closeModal(); initTop(); };
+};
 async function initTop() {
   try { const v = await api("/api/version"); document.querySelector(".logo").title = "버전 " + v.version; document.querySelector(".logo").textContent = "숨결 편집기 " + v.version.slice(4); } catch (e) {}
   const chs = await api("/api/channels"); $("#chSel").innerHTML = chs.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
