@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>숨결 편집기</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <b class="logo">숨결 편집기</b>
+  <input id="projName" value="새 프로젝트" title="프로젝트 이름">
+  <select id="aspect" title="화면 비율"><option value="1080x1920">세로 9:16</option><option value="1920x1080">가로 16:9</option><option value="1080x1080">정사각 1:1</option></select>
+  <button id="btnNew">새로</button><button id="btnOpen">열기</button><button id="btnSave">저장</button>
+  <span id="saveState" class="dim"></span>
+  <span class="grow"></span>
+  <span id="keyState" class="dim"></span>
+</header>
+<main>
+  <section id="left">
+    <nav class="tabs"><button data-tab="media" class="on">미디어</button><button data-tab="script">대본 추천</button><button data-tab="find">영상 찾기</button></nav>
+    <div id="tab-media" class="tab on">
+      <div class="row"><button id="btnPick">＋ 파일 가져오기</button></div>
+      <div class="row"><button id="btnSrt">＋ 자막(.srt) 불러오기</button><input id="srtFile" type="file" accept=".srt,.txt" class="hidden"></div>
+      <div id="mediaList"></div>
+    </div>
+    <div id="tab-script" class="tab">
+      <label>채널 <select id="chSel"></select></label>
+      <label>주제(비우면 추천) <input id="topic" placeholder="예: 해달은 왜 돌을 들고 다닐까"></label>
+      <label>문장 수 <input id="nSent" type="number" value="14" min="5" max="30"></label>
+      <button id="btnRec">대본 추천 받기</button>
+      <div id="recOut"></div>
+    </div>
+    <div id="tab-find" class="tab">
+      <div class="row"><input id="q" placeholder="검색어(영어), 예: sea otter"><select id="src"><option value="pexels">Pexels</option><option value="pixabay">Pixabay</option></select></div>
+      <div class="row"><select id="orient"><option value="">모든 방향</option><option value="portrait">세로</option><option value="landscape">가로</option></select><button id="btnFind">찾기</button></div>
+      <div id="findOut" class="grid"></div>
+    </div>
+  </section>
+  <section id="center">
+    <div id="stage"><canvas id="cv" width="1080" height="1920"></canvas></div>
+    <div id="transport">
+      <button id="btnPlay" title="재생/멈춤 (스페이스)">▶</button>
+      <span id="tc">00:00.00</span> / <span id="tdur">00:00.00</span>
+      <span class="grow"></span>
+      <button id="btnXfAll" title="모든 영상 사이를 0.5초씩 서서히 바뀌게">◐ 전환 일괄</button>
+      <button id="btnSplit" title="나누기 (S)">✂ 나누기</button>
+      <button id="btnText" title="글자 추가 (T)">T 글자</button>
+      <button id="btnDel" title="지우기 (Delete)">🗑</button>
+      <button id="btnUndo" title="되돌리기 (Ctrl+Z)">↶</button><button id="btnRedo" title="다시 (Ctrl+Y)">↷</button>
+    </div>
+  </section>
+  <section id="right">
+    <h3>속성</h3>
+    <div id="insp" class="dim">클립을 고르면 여기서 고쳐요.</div>
+  </section>
+</main>
+<footer id="tl">
+  <div id="tlHead"><span>타임라인</span><span class="grow"></span><label>확대 <input id="zoom" type="range" min="10" max="300" value="60"></label></div>
+  <div id="tlBody">
+    <div id="ruler"></div>
+    <div id="tracks"></div>
+    <div id="playhead"></div>
+  </div>
+</footer>
+<div id="modal" class="hidden"><div class="box"><div id="modalBody"></div><div class="row end"><button id="modalClose">닫기</button></div></div></div>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>
