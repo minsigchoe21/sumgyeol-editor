@@ -622,7 +622,7 @@ function renderSents() {
     <textarea data-act="text">${(c.text || "").replace(/</g, "&lt;")}</textarea>
     <div class="row" style="margin:4px 0 0"><input class="memo" data-act="speak" style="margin:0" placeholder="읽는 법(비우면 자동: 숫자→한글)" value="${(c.speak || "").replace(/"/g, "&quot;")}"><button data-act="voice" style="font-size:12px;padding:3px 7px;white-space:nowrap">🔊 목소리${c.voice && MEDIA[c.voice] ? " ✓" : ""}</button></div>
     <input class="memo" data-act="memo" placeholder="코멘트·요청(예: 해달이 털 고르는 클로즈업, 바다 위에서)" value="${(c.memo || "").replace(/"/g, "&quot;")}">
-    <div class="btns"><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}</div>
+    <div class="btns"><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}<button data-act="ask" class="${c.veoAsk ? "on" : ""}" title="이 문장 Veo를 Claude에게 맡겨요(저장 후 채팅에 'Veo 맡겼어')">🤖 ${c.veoAsk ? "Claude에게 맡김 ✓" : "Claude에게 맡기기"}</button></div>
     <div class="res">${c.veo ? veoHtml(c.veo) : ""}</div></div>`; }).join("");
   $("#btnVoiceAll").onclick = async () => { const all = sentClips(); for (let k = 0; k < all.length; k++) { $("#voiceState").textContent = `목소리 만드는 중 ${k + 1}/${all.length}…`; const ok = await sentVoice(all[k], true); if (!ok) break; } $("#voiceState").textContent = "다 만들었어요 ✓"; renderSents(); };
   box.querySelectorAll(".srow").forEach((row) => {
@@ -636,6 +636,7 @@ function renderSents() {
     row.querySelector('[data-act="img"]').onclick = () => sentFind(c, row, "image");
     row.querySelector('[data-act="veo"]').onclick = () => sentVeo(c, row);
     const vi = row.querySelector('[data-act="veoin"]'); if (vi) vi.onclick = () => veoImport(c, row);
+    row.querySelector('[data-act="ask"]').onclick = async () => { c.veoAsk = !c.veoAsk; if (c.veoAsk && !c.veo) await sentVeo(c, row); dirty(); await save(); renderSents(); flash(c.veoAsk ? "맡겼어요 — 채팅에 'Veo 맡겼어'라고 알려 주세요" : "맡기기를 취소했어요"); };
     bindVeo(row, c);
   });
 }
