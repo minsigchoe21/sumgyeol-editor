@@ -11,13 +11,15 @@ def ensure(data_dir):
     if _tts: return _tts
     with _lock:
         if _tts: return _tts
+        lib = os.path.join(data_dir, "pylib")   # 편집기 전용 폴더에 설치(사용자 site 경로 문제 피하기, 11-07 "No module named sherpa_onnx")
+        if lib not in sys.path: sys.path.insert(0, lib)
         try: import sherpa_onnx
         except ImportError:
             STATE["state"] = "목소리 프로그램 설치 중(처음 한 번, 1~3분)…"
-            subprocess.run([sys.executable, "-m", "pip", "install", "--user", "sherpa-onnx"], check=True,
-                           creationflags=0x08000000 if os.name == "nt" else 0)
-            import site, importlib; importlib.invalidate_caches()
-            if site.getusersitepackages() not in sys.path: sys.path.append(site.getusersitepackages())
+            r = subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "--target", lib, "sherpa-onnx"], capture_output=True, text=True,
+                               creationflags=0x08000000 if os.name == "nt" else 0)
+            if r.returncode: raise RuntimeError("sherpa-onnx 설치 실패: " + (r.stderr or r.stdout)[-400:])
+            import importlib; importlib.invalidate_caches()
             import sherpa_onnx
         d = os.path.join(data_dir, "tts"); m = os.path.join(d, MODEL); os.makedirs(d, exist_ok=True)
         if not os.path.exists(os.path.join(m, "voice.bin")):
@@ -36,8 +38,8 @@ def ensure(data_dir):
 
 def synth(data_dir, text, out_wav, sid=7, speed=1.15, steps=10):
     """원시 음성을 wav(16비트)로. 길이(초)를 돌려줘요."""
-    import sherpa_onnx
     tts = ensure(data_dir)
+    import sherpa_onnx
     g = sherpa_onnx.GenerationConfig(); g.sid = sid; g.speed = speed; g.num_steps = steps; g.extra = {"lang": "ko"}
     a = tts.generate(text, g); sm = a.samples
     pcm = array.array("h", (max(-32767, min(32767, int(x * 32767))) for x in sm))
