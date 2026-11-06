@@ -258,6 +258,10 @@ function sync(hard) {
     else if (hard || Math.abs(e.currentTime - want) > 0.03) { e.pause(); e.currentTime = want; }
   }
   for (const id in EL) if (!used.has(id) && EL[id].pause) EL[id].pause();
+  if (playing) for (const c of P.clips) {   // 곧 나올 클립은 미리 그 자리로 감아 두기(끊김 줄이기)
+    if ((c.kind !== "video" && c.kind !== "audio") || c.start <= t || c.start > t + 1.2) continue; const m = MEDIA[c.media]; if (!m || used.has(m.id)) continue;
+    const e = elFor(m); if (Math.abs(e.currentTime - c.in) > 0.05) e.currentTime = c.in;
+  }
 }
 function seek(s) { t = Math.max(0, s); if (playing) { t0 = t; wall0 = performance.now(); } placeHead(); sync(true); draw(); }
 function loop() {
@@ -626,6 +630,37 @@ async function veoImport(c, row) {
   c.veo.check = r.error ? { pass: false, score: 0, issues_ko: [r.error] } : r; dirty(); renderSents();
 }
 document.querySelector('[data-tab="sent"]').addEventListener("click", renderSents);
+
+// ------------------------------------------------------------ 미리보기 내보내기(11-07 "너가 만든 영상 줘봐") ----
+// 화면(캔버스)과 소리를 실제 재생 속도로 녹화 → 서버가 mp4로 바꿔 sources\<폴더>\미리보기_<이름>.mp4 에 저장하고 열어 줘요.
+let AC = null, ADEST = null; const ACONN = new Set();
+function audioRoute(e) {
+  if (!AC) { AC = new AudioContext(); ADEST = AC.createMediaStreamDestination(); }
+  if (ACONN.has(e)) return; const src = AC.createMediaElementSource(e); src.connect(AC.destination); src.connect(ADEST); ACONN.add(e);
+}
+async function exportPreview() {
+  if (!P.clips.length) return; if (playing) togglePlay(false);
+  const ov = document.createElement("div"); ov.id = "updOv"; document.body.appendChild(ov);
+  ov.textContent = "미리보기 준비 중(영상 불러오기)…"; await waitAllReady();
+  const ms = [...new Set(P.clips.filter((c) => c.media && MEDIA[c.media]).map((c) => c.media))];
+  await Promise.all(ms.map((id) => new Promise((res) => { const e = elFor(MEDIA[id]); if (MEDIA[id].kind === "image") { e.complete ? res() : (e.onload = res); return; } audioRoute(e); if (e.readyState >= 3) res(); else { e.addEventListener("canplaythrough", res, { once: true }); setTimeout(res, 8000); e.load(); } })));
+  await AC.resume();
+  const stream = cv.captureStream(30); ADEST.stream.getAudioTracks().forEach((tr) => stream.addTrack(tr));
+  const mime = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"].find((m) => MediaRecorder.isTypeSupported(m));
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10e6 }); const chunks = [];
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  const done = new Promise((res) => (rec.onstop = res));
+  seek(0); await new Promise((r) => setTimeout(r, 600));
+  rec.start(1000); togglePlay(true); const total = projDur();
+  const tick = setInterval(() => (ov.textContent = `🎬 미리보기 녹화 중 ${fmt(t)} / ${fmt(total)} — 이 탭을 그대로 띄워 두세요`), 250);
+  while (playing) await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 400)); rec.stop(); await done; clearInterval(tick);
+  ov.textContent = "mp4로 바꾸는 중…";
+  const blob = new Blob(chunks, { type: "video/webm" });
+  const r = await fetch(`/api/export_upload?name=${encodeURIComponent(P.name)}&folder=${encodeURIComponent(projFolder())}`, { method: "POST", body: blob }).then((x) => x.json());
+  ov.textContent = r.error ? "실패: " + r.error : "✓ 미리보기 저장: " + r.path; setTimeout(() => ov.remove(), 8000);
+}
+$("#btnExport").onclick = exportPreview;
 
 // ------------------------------------------------------------ 시작 ----
 window.ed = { get P() { return P; }, set P(v) { P = v; afterLoad(); }, addMediaClip, seek, togglePlay, MEDIA: () => MEDIA, loadMedia };

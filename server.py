@@ -609,6 +609,25 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         p = urlparse(self.path).path
+        if p == "/api/export_upload":   # 미리보기 녹화(webm)를 받아 mp4로 바꿔 저장하고 열어 줘요
+            q = parse_qs(urlparse(self.path).query); name = SAFE.sub("_", q.get("name", ["미리보기"])[0]).strip() or "미리보기"
+            folder = SAFE.sub("_", q.get("folder", [""])[0]).strip(); d = os.path.join(SOURCES, folder) if folder else os.path.join(SOURCES, "_미리보기"); os.makedirs(d, exist_ok=True)
+            webm = os.path.join(DATA, f"rec_{int(time.time())}.webm"); left = int(self.headers.get("Content-Length", 0) or 0)
+            with open(webm, "wb") as f:
+                while left > 0:
+                    chunk = self.rfile.read(min(1 << 20, left))
+                    if not chunk: break
+                    f.write(chunk); left -= len(chunk)
+            out = os.path.join(d, f"미리보기_{name}.mp4")
+            r = run(["-i", webm, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out])
+            try: os.remove(webm)
+            except Exception: pass
+            if r.returncode: return self._json({"error": r.stderr[-300:]}, 500)
+            log(f"preview exported {out}")
+            if os.name == "nt":
+                try: os.startfile(out)
+                except Exception: pass
+            return self._json({"ok": True, "path": rel_of(out) or out})
         if p == "/api/pick": return self._json({"ids": import_paths(pick_files())})
         if p == "/api/import": return self._json({"ids": import_paths(self._body().get("paths", []))})
         if p == "/api/inbox":   # GitHub inbox/의 Claude 초안 목록(아직 projects에 없는 것)
