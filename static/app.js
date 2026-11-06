@@ -41,6 +41,7 @@ async function loadMedia() {
     d.innerHTML = `<img src="${img}" alt=""><div class="badge">${{ video: "영상", audio: "소리", image: "그림" }[m.kind]} ${m.kind !== "image" ? m.dur.toFixed(1) + "초" : ""}</div><div class="nm">${m.status === "working" ? "준비 중… " : m.status === "error" ? "오류 " : ""}${m.name}</div>`;
     d.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/media", m.id); });
     d.addEventListener("dblclick", () => addMediaClip(m.id, null));
+    if (m.kind === "video" && m.status === "ready") { const sb = document.createElement("button"); sb.textContent = "🔗"; sb.title = "이어 붙일 비슷한 영상 찾기"; sb.style.cssText = "position:absolute;top:3px;right:3px;padding:0 5px;font-size:12px"; sb.onclick = (e) => { e.stopPropagation(); findSimilar(m.id); }; d.appendChild(sb); }
     box.appendChild(d);
   });
   if (list.some((m) => m.status === "working")) setTimeout(loadMedia, 1500);
@@ -145,8 +146,10 @@ function renderInsp() {
   if (c.kind === "text") h += `<label>글자<textarea data-k="text">${c.text || ""}</textarea></label>` + f("size", "크기", "number", 1) + f("color", "색", "color", 1) + f("y", "세로 위치", "range", 0.01, 'min="0" max="1"') + f("stroke", "외곽선 두께", "number", 1);
   h += `<div class="row" style="gap:6px">${f("fadeIn", "서서히 나타나기(초)", "number", 0.1, 'min="0" max="5"')}${f("fadeOut", "서서히 사라지기(초)", "number", 0.1, 'min="0" max="5"')}</div>`;
   if (c.track === "V1") h += `<div class="row"><button id="btnXf">앞 영상과 겹쳐 바뀌기(0.5초)</button></div>`;
+  if (c.kind === "video" && c.media) h += `<div class="row"><button id="btnSim">🔗 이어 붙일 비슷한 영상 찾기</button></div>`;
   if (MEDIA[c.media]?.credit) { const cr = MEDIA[c.media].credit; h += `<p class="dim" style="font-size:11px">출처: ${cr.source} · ${cr.author} · ${cr.license}<br><a href="${cr.page}" target="_blank" style="color:#7fd0ff">${cr.page}</a></p>`; }
   box.innerHTML = h;
+  const bs = $("#btnSim"); if (bs) bs.onclick = () => findSimilar(c.media);
   const bx = $("#btnXf"); if (bx) bx.onclick = () => { snap(); crossfade(c, 0.5); renderTL(); renderInsp(); draw(); };
   box.querySelectorAll("[data-k]").forEach((el) => {
     el.addEventListener("focus", () => (el._b = JSON.stringify(P)));
@@ -373,12 +376,12 @@ $("#btnCredits").onclick = async () => {
   const r = await api("/api/credits_text", { folder: folderOf() });
   modal(`<h3>출처 문구 — ${folderOf()}</h3><p class="dim" style="font-size:12px">업로드 설명란에 붙여 넣으세요. 출처 표시가 필요한 영상은 빠짐없이 들어 있어요.</p><textarea style="width:100%;min-height:220px;background:#262b34;color:var(--fg);border:1px solid var(--line);border-radius:6px">${r.text.replace(/</g, "&lt;")}</textarea>`);
 };
-function showFound(items) {
+function showFound(items, desc = true) {
   FOUND = items;
   const esc = (x) => String(x ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
-  $("#findOut").innerHTML = items.map((it, i) => `<div class="fi"><img src="${esc(it.thumb)}" alt="" loading="lazy" title="${esc(it.title || it.kw || "")}"><div class="meta"><div class="ko" data-ko="${i}" style="color:var(--fg);font-weight:700">…</div><span style="display:inline-block;padding:0 5px;border-radius:4px;background:${COND_COLOR[it.cond] || "#888"};color:#111;font-weight:700">${esc(it.cond_ko || "")}</span><br><b>${SRC_NAME[it.source] || it.source}</b>${it.w ? " · " + it.w + "×" + it.h : ""}${it.dur ? " · " + it.dur + "초" : ""}<br><span title="${esc(it.license)}">${esc((it.license || "").slice(0, 28))}</span>${it.author ? " · " + esc(it.author.slice(0, 24)) : ""} <a href="${esc(it.page)}" target="_blank" style="color:#7fd0ff">원본</a></div><button data-i="${i}">받아서 넣기</button></div>`).join("") || '<p class="dim">없어요.</p>';
+  $("#findOut").innerHTML = items.map((it, i) => `<div class="fi"><img src="${esc(it.thumb)}" alt="" loading="lazy" title="${esc(it.title || it.kw || "")}"><div class="meta"><div class="ko" data-ko="${i}" style="color:var(--fg);font-weight:700">${desc ? "…" : esc(it.ko || "")}</div><span style="display:inline-block;padding:0 5px;border-radius:4px;background:${COND_COLOR[it.cond] || "#888"};color:#111;font-weight:700">${esc(it.cond_ko || "")}</span><br><b>${SRC_NAME[it.source] || it.source}</b>${it.w ? " · " + it.w + "×" + it.h : ""}${it.dur ? " · " + it.dur + "초" : ""}<br><span title="${esc(it.license)}">${esc((it.license || "").slice(0, 28))}</span>${it.author ? " · " + esc(it.author.slice(0, 24)) : ""} <a href="${esc(it.page)}" target="_blank" style="color:#7fd0ff">원본</a></div><button data-i="${i}">받아서 넣기</button></div>`).join("") || '<p class="dim">없어요.</p>';
   $("#findOut").querySelectorAll("[data-i]").forEach((b) => (b.onclick = () => takeItem(+b.dataset.i, b)));
-  if (items.length) api("/api/describe", { items }).then((r) => {   // 한 줄 한국어 설명
+  if (desc && items.length) api("/api/describe", { items }).then((r) => {   // 한 줄 한국어 설명
     (r.items || []).forEach((x) => { if (items[x.i]) { items[x.i].ko = x.ko; items[x.i].topic = x.topic; } const el = document.querySelector(`[data-ko="${x.i}"]`); if (el) el.textContent = x.ko || ""; });
     document.querySelectorAll("[data-ko]").forEach((el) => { if (el.textContent === "…") el.textContent = items[+el.dataset.ko]?.title?.slice(0, 30) || ""; });
   });
@@ -402,6 +405,15 @@ async function autoScript() {
   else $("#autoState").textContent = "대본 추천을 못 했어요(대본 추천 탭의 안내 확인)";
 }
 async function waitAllReady() { for (let k = 0; k < 300; k++) { await loadMedia(); if (!Object.values(MEDIA).some((m) => m.status === "working")) return; await new Promise((r) => setTimeout(r, 1500)); } }
+async function findSimilar(mid) {
+  document.querySelector('[data-tab="find"]').click();
+  $("#findOut").innerHTML = `<p class="dim">「${MEDIA[mid]?.name || ""}」 장면을 보고 이어 붙일 영상을 찾는 중(20~40초)…</p>`;
+  const r = await api("/api/similar", { id: mid, ...condOpt() });
+  if (r.error) { $("#findOut").innerHTML = `<p style="color:#ff8a65">${r.error}</p>`; return; }
+  (r.items || []).forEach((it) => (it.ko = (it.why ? it.why + " · " : "") + (it.title || it.kw || "").slice(0, 30)));
+  showFound(r.items || [], false);
+  $("#findOut").insertAdjacentHTML("afterbegin", `<div style="grid-column:1/-1;font-size:12px" class="dim">🔗 <b style="color:var(--fg)">${r.subject || ""}</b>에 이어 붙일 영상 · 검색어: ${(r.keywords || []).map((k) => `${k.q}(${k.why})`).join(", ")}</div>`);
+}
 $("#btnFind").onclick = async () => {
   $("#findOut").innerHTML = '<p class="dim">찾는 중…</p>';
   const r = await api("/api/search", { q: $("#q").value, source: $("#src").value, orient: $("#orient").value, ...condOpt() });

@@ -278,6 +278,39 @@ def wonder(n_kw=6, level="attrib", review_ok=False):
     random.shuffle(out); out.sort(key=lambda it: COND_RANK[it["cond"]]); return {"items": out, "sources": srcs}
 
 UA = "sumgyeol-editor/1.0 (personal shorts editor)"
+
+SCHEMAS_EXTRA = {"similar": {"type": "object", "properties": {"subject": S_STR, "keywords": {"type": "array", "items": {"type": "object", "properties": {
+    "q": S_STR, "why": S_STR}, "required": ["q", "why"]}}}, "required": ["keywords"]}}
+def similar(mid, level="attrib", review_ok=False):
+    """🔗 고른 영상과 비슷하거나 이어 붙이기 좋은 영상 찾기(11-06): Claude가 장면을 보고 검색어를 만들고, 사용 조건을 지켜 여러 출처에서 찾아요."""
+    SCHEMAS.update(SCHEMAS_EXTRA)
+    m = DB.get(mid)
+    if not m: return {"error": "영상을 못 찾았어요"}
+    cr = m.get("credit") or {}
+    kws = []; subject = cr.get("ko") or cr.get("title") or ""
+    if keys().get("anthropic") and m["kind"] == "video":
+        content = [{"type": "text", "text": f"이 영상(파일 {m['name']}, 출처 설명: {cr.get('ko') or ''} {cr.get('title') or ''})의 장면 3장이에요. "
+                    "이 영상 앞뒤에 이어 붙이기 좋은 무료 실사 영상을 찾을 영어 검색어 6개를 만들어 줘: 같은 대상의 다른 각도·가까이, 같은 대상이 다음에 하는 행동, "
+                    "사는 곳·주변 환경 넓은 장면, 관련된 다른 생물·현상. why는 한국어로 짧게(예: '같은 해달 가까이'). subject는 영상 속 대상 한국어 이름. answer 도구로 돌려줘."}]
+        for b in frames_b64(mid): content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}})
+        r = claude(content, 1200, "similar")
+        if r.get("keywords"): kws = r["keywords"][:6]; subject = r.get("subject") or subject
+    if not kws:   # 키가 없으면 제목·태그 낱말로
+        base = (cr.get("title") or os.path.splitext(m["name"])[0]).replace(",", " ")
+        words = [w for w in re.split(r"[\s_\-]+", base) if len(w) > 2 and not w.isdigit()][:3]
+        q = " ".join(words) or base
+        kws = [{"q": q, "why": "같은 대상"}, {"q": q + " close up", "why": "가까이"}, {"q": q + " underwater" if "sea" in q.lower() else q + " wide", "why": "넓은 장면"}]
+    k = keys(); srcs = [x for x in ("pixabay", "pexels") if k.get(x)] + ["commons", "nasa"]
+    have = {(DB[i].get("credit") or {}).get("source", "") + str((DB[i].get("credit") or {}).get("id", "")) for i in DB}
+    out, seen = [], set()
+    for kw in kws:
+        for src in srcs:
+            for it in annotate(search(kw["q"], src, "").get("items", []), level, review_ok)[:2]:
+                key = it["source"] + str(it["id"])
+                if key in seen or key in have: continue
+                seen.add(key); it["kw"] = kw["q"]; it["why"] = kw.get("why", ""); out.append(it)
+    out.sort(key=lambda it: COND_RANK[it["cond"]])
+    return {"subject": subject, "keywords": kws, "items": out}
 def nasa_file(href):
     """NASA 항목의 파일 목록에서 가장 알맞은 mp4(orig > large > medium)를 골라요."""
     files = http_json(href, {"User-Agent": UA})
@@ -501,6 +534,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/wonder": j = self._body(); return self._json(wonder(6, j.get("level", "attrib"), bool(j.get("review"))))
         if p == "/api/credits_text":   # 업로드 설명란에 붙일 출처 문구(이 폴더에서 받은 것 전부)
             folder = self._body().get("folder") or "_받은영상"; return self._json({"text": credits_text(folder)})
+        if p == "/api/similar": j = self._body(); return self._json(similar(j.get("id"), j.get("level", "attrib"), bool(j.get("review"))))
         if p == "/api/describe": return self._json(describe(self._body().get("items", [])[:40]))
         if p == "/api/fetch_pexels":   # API 키 없이: Pexels 영상 주소/번호로 바로 받기(11-06 Pexels 새 키 발급 중단)
             j = self._body(); m = re.findall(r"(\d{5,})", j.get("url", ""))
