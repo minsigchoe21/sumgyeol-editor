@@ -11,8 +11,14 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 #   Google Drive 01_쇼츠\숨결편집기\        ← 이 코드 + projects\ (두 PC가 같이 봄, Claude도 Drive로 읽음)
 #   Google Drive 01_쇼츠\sources\<편>\     ← 원본 클립·내레이션·자막(두 PC 공용)
 #   PC 로컬 %LOCALAPPDATA%\sumgyeol\      ← 편집용 저화질 사본(동기화 안 함)
-SHORTS = os.path.dirname(ROOT)
-if not (os.path.basename(SHORTS) == "01_쇼츠" or os.path.isdir(os.path.join(SHORTS, "지구의숨결"))): SHORTS = None
+def find_shorts():   # 압축을 풀며 폴더가 한 겹 더 생겨도(…\01_쇼츠\sumgyeol_editor_auto\sumgyeol_editor) 위로 올라가며 01_쇼츠를 찾아요
+    d = ROOT
+    for _ in range(5):
+        d = os.path.dirname(d)
+        if os.path.basename(d) == "01_쇼츠" or os.path.isdir(os.path.join(d, "지구의숨결")): return d
+        if os.path.dirname(d) == d: break
+    return None
+SHORTS = find_shorts()
 LOCAL = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".cache")
 DATA = os.path.join(LOCAL, "sumgyeol"); MED = os.path.join(DATA, "media"); PROJ = os.path.join(ROOT, "projects"); STATIC = os.path.join(ROOT, "static")
 SOURCES = os.path.join(SHORTS, "sources") if SHORTS else os.path.join(ROOT, "sources")
