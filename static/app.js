@@ -348,7 +348,7 @@ $("#srtFile").onchange = async (e) => {
 // ------------------------------------------------------------ 시작 ----
 window.ed = { get P() { return P; }, set P(v) { P = v; afterLoad(); }, addMediaClip, seek, togglePlay, MEDIA: () => MEDIA, loadMedia };
 // ------------------------------------------------------------ 켜 둔 채로 자동 업데이트 ----
-// 1분마다 GitHub 새 버전 확인 → 재생 중이 아니면 저장하고 적용 → 서버가 다시 켜지면 같은 프로젝트로 새로고침
+// 3분마다 GitHub 새 버전 확인 → 재생 중이 아니면 저장하고 적용 → 서버가 다시 켜지면 같은 프로젝트로 새로고침
 async function checkUpdate() {
   try {
     const r = await api("/api/update/check"); if (!r.update || playing) return;
@@ -359,7 +359,7 @@ async function checkUpdate() {
     ov.textContent = "다시 켜지지 않았어요. START.bat을 다시 실행해 주세요.";
   } catch (e) {}
 }
-setInterval(checkUpdate, 60000);
+setInterval(checkUpdate, 180000);   // 3분마다(GitHub API 한도: 시간당 60번)
 (async () => {
   await initTop(); await loadMedia();
   let last = null; try { last = localStorage.getItem("lastProj"); } catch (e) {}

@@ -5,12 +5,13 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = 'minsigchoe21/sumgyeol-editor'
 try {
   $local = if (Test-Path "$here\VERSION") { (Get-Content "$here\VERSION" -Raw).Trim() } else { '' }
-  $remote = (Invoke-WebRequest "https://raw.githubusercontent.com/$repo/main/VERSION?t=$([DateTime]::Now.Ticks)" -UseBasicParsing -TimeoutSec 8).Content.Trim()
+  $sha = (Invoke-WebRequest "https://api.github.com/repos/$repo/commits/main" -Headers @{Accept='application/vnd.github.sha'} -UseBasicParsing -TimeoutSec 8).Content.Trim()
+  $remote = (Invoke-WebRequest "https://raw.githubusercontent.com/$repo/$sha/VERSION" -UseBasicParsing -TimeoutSec 8).Content.Trim()
   if ($remote -eq $local) { Write-Host "[업데이트] 최신판이에요 ($local)"; exit 0 }
   Write-Host "[업데이트] 새 버전 $remote 받는 중... (지금 $local)"
   $tmp = Join-Path $env:TEMP ('sumgyeol_upd_' + [guid]::NewGuid())
   New-Item -ItemType Directory -Path $tmp | Out-Null
-  Invoke-WebRequest "https://github.com/$repo/archive/refs/heads/main.zip" -OutFile "$tmp\u.zip" -UseBasicParsing -TimeoutSec 60
+  Invoke-WebRequest "https://codeload.github.com/$repo/zip/$sha" -OutFile "$tmp\u.zip" -UseBasicParsing -TimeoutSec 60
   Expand-Archive "$tmp\u.zip" -DestinationPath $tmp -Force
   $src = Get-ChildItem $tmp -Directory | Select-Object -First 1
   Get-ChildItem $src.FullName -Recurse -File | ForEach-Object {

@@ -283,12 +283,17 @@ SERVER = None
 def local_version():
     try: return open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
     except Exception: return ""
+REMOTE_SHA = None
 def remote_version():
-    req = urllib.request.Request(f"https://raw.githubusercontent.com/{REPO}/main/VERSION?t={time.time()}", headers={"Cache-Control": "no-cache"})
-    with urllib.request.urlopen(req, timeout=8) as r: return r.read().decode().strip()
+    """GitHub API로 main의 최신 커밋을 알아내고, 그 커밋의 VERSION을 읽어요(raw 캐시 피하기)."""
+    global REMOTE_SHA
+    req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/commits/main", headers={"Accept": "application/vnd.github.sha", "User-Agent": "sumgyeol-editor"})
+    with urllib.request.urlopen(req, timeout=8) as r: REMOTE_SHA = r.read().decode().strip()
+    with urllib.request.urlopen(f"https://raw.githubusercontent.com/{REPO}/{REMOTE_SHA}/VERSION", timeout=8) as r: return r.read().decode().strip()
 def apply_update():
-    import zipfile, tempfile, io
-    with urllib.request.urlopen(f"https://github.com/{REPO}/archive/refs/heads/main.zip", timeout=60) as r: data = r.read()
+    import zipfile, io
+    sha = REMOTE_SHA or (remote_version() and REMOTE_SHA)
+    with urllib.request.urlopen(f"https://codeload.github.com/{REPO}/zip/{sha}", timeout=60) as r: data = r.read()
     z = zipfile.ZipFile(io.BytesIO(data)); top = z.namelist()[0].split("/")[0]
     for n in z.namelist():
         if n.endswith("/"): continue
