@@ -218,7 +218,7 @@ def search(q, source, orient):
                             "w": best.get("width"), "h": best.get("height"), "dl": best.get("url"), "page": v.get("pageURL"), "author": v.get("user", ""), "license": "Pixabay Content License", "title": v.get("tags", "")})
         elif source == "commons":   # 위키미디어 공용: 키 없음. 퍼블릭 도메인·CC0·CC BY·CC BY-SA만(출처 표시 필요)
             u = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode({"action": "query", "format": "json", "generator": "search", "gsrsearch": f"{q} filetype:video",
-                "gsrnamespace": 6, "gsrlimit": 20, "prop": "imageinfo", "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 320})
+                "gsrnamespace": 6, "gsrlimit": 20, "prop": "imageinfo|categories", "cllimit": "max", "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 320})
             pages = http_json(u, {"User-Agent": UA}).get("query", {}).get("pages", {})
             for pg in sorted(pages.values(), key=lambda x: x.get("index", 0)):
                 ii = (pg.get("imageinfo") or [{}])[0]; em = ii.get("extmetadata", {})
@@ -227,7 +227,7 @@ def search(q, source, orient):
                 if (ii.get("duration") or 99) < 3: continue
                 out.append({"source": "commons", "id": str(pg["pageid"]), "thumb": ii.get("thumburl"), "dur": round(ii.get("duration") or 0, 1), "w": ii.get("width"), "h": ii.get("height"),
                             "dl": ii.get("url"), "page": ii.get("descriptionurl"), "author": re.sub("<[^>]+>", "", em.get("Artist", {}).get("value", ""))[:80].strip(),
-                            "license": lic, "title": pg.get("title", "")[5:]})
+                            "license": lic + (" ⚠검토 전" if any("license review" in c.get("title", "").lower() for c in pg.get("categories", [])) else ""), "title": pg.get("title", "")[5:]})
         elif source == "nasa":   # NASA 이미지·영상 라이브러리: 키 없음, 대부분 퍼블릭 도메인(NASA 로고·제3자 자료 제외)
             u = "https://images-api.nasa.gov/search?" + urllib.parse.urlencode({"q": q, "media_type": "video"})
             for it in http_json(u, {"User-Agent": UA}).get("collection", {}).get("items", [])[:15]:
