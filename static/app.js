@@ -44,7 +44,11 @@ async function loadMedia() {
     if (m.kind === "video" && m.status === "ready") { const sb = document.createElement("button"); sb.textContent = "🔗"; sb.title = "이어 붙일 비슷한 영상 찾기"; sb.style.cssText = "position:absolute;top:3px;right:3px;padding:0 5px;font-size:12px"; sb.onclick = (e) => { e.stopPropagation(); findSimilar(m.id); }; d.appendChild(sb); }
     box.appendChild(d);
   });
-  if (list.some((m) => m.status === "working")) setTimeout(loadMedia, 1500);
+  const wk = list.filter((m) => m.status === "working").length;
+  let pv = document.getElementById("prepOv");
+  if (wk) { if (!pv) { pv = document.createElement("div"); pv.id = "prepOv"; pv.style.cssText = "position:fixed;right:14px;bottom:262px;background:#262b34;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;z-index:60"; document.body.appendChild(pv); }
+    pv.textContent = `편집용 사본 만드는 중: ${wk}개 남음(4K는 하나에 1~3분)`; setTimeout(loadMedia, 2000); }
+  else if (pv) { pv.remove(); renderTL(); draw(); }
 }
 $("#btnPick").onclick = async () => { $("#btnPick").textContent = "PC에서 파일을 고르세요…"; await api("/api/pick", {}); $("#btnPick").textContent = "＋ 파일 가져오기"; loadMedia(); };
 
@@ -548,16 +552,21 @@ function vAt(tt) { return P.clips.filter((c) => c.track === "V1" && tt >= c.star
 function renderSents() {
   const box = $("#sentList"); if (!box) return; const ss = sentClips();
   if (!ss.length) { box.innerHTML = '<p class="dim">글자 트랙에 문장이 없어요. 대본 추천이나 자막(.srt) 불러오기로 넣어 주세요.</p>'; return; }
-  box.innerHTML = ss.map((c, i) => { const v = vAt(c.start + Math.min(0.5, c.dur / 2)); const th = v && MEDIA[v.media] ? (MEDIA[v.media].kind === "image" ? `/media/${v.media}/thumb.jpg` : `/media/${v.media}/thumb.jpg`) : "";
+  const head = `<div class="row"><button id="btnVoiceAll">🔊 모든 문장 목소리 다시 만들기</button></div><div id="voiceState" class="dim" style="font-size:12px"></div>`;
+  box.innerHTML = head + ss.map((c, i) => { const v = vAt(c.start + Math.min(0.5, c.dur / 2)); const th = v && MEDIA[v.media] ? (MEDIA[v.media].kind === "image" ? `/media/${v.media}/thumb.jpg` : `/media/${v.media}/thumb.jpg`) : "";
     return `<div class="srow" data-id="${c.id}"><div class="hdr"><b>${c.n || i + 1}</b> ${fmt(c.start)} · ${c.dur.toFixed(1)}초 <button data-act="go" title="이 문장으로 가서 재생">▶</button>${v?.ai ? ' <span style="color:#ff8a65">AI</span>' : ""}${th ? `<img src="${th}" title="지금 화면: ${MEDIA[v.media].name}">` : '<img alt="">'}</div>
     <textarea data-act="text">${(c.text || "").replace(/</g, "&lt;")}</textarea>
+    <div class="row" style="margin:4px 0 0"><input class="memo" data-act="speak" style="margin:0" placeholder="읽는 법(비우면 자동: 숫자→한글)" value="${(c.speak || "").replace(/"/g, "&quot;")}"><button data-act="voice" style="font-size:12px;padding:3px 7px;white-space:nowrap">🔊 목소리${c.voice && MEDIA[c.voice] ? " ✓" : ""}</button></div>
     <input class="memo" data-act="memo" placeholder="코멘트·요청(예: 해달이 털 고르는 클로즈업, 바다 위에서)" value="${(c.memo || "").replace(/"/g, "&quot;")}">
     <div class="btns"><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}</div>
     <div class="res">${c.veo ? veoHtml(c.veo) : ""}</div></div>`; }).join("");
+  $("#btnVoiceAll").onclick = async () => { const all = sentClips(); for (let k = 0; k < all.length; k++) { $("#voiceState").textContent = `목소리 만드는 중 ${k + 1}/${all.length}…`; const ok = await sentVoice(all[k], true); if (!ok) break; } $("#voiceState").textContent = "다 만들었어요 ✓"; renderSents(); };
   box.querySelectorAll(".srow").forEach((row) => {
     const c = clipById(row.dataset.id);
     row.querySelector('[data-act="text"]').oninput = (e) => { c.text = e.target.value; draw(); renderTL(); dirty(); };
     row.querySelector('[data-act="memo"]').oninput = (e) => { c.memo = e.target.value; dirty(); };
+    row.querySelector('[data-act="speak"]').oninput = (e) => { c.speak = e.target.value; dirty(); };
+    row.querySelector('[data-act="voice"]').onclick = async (e) => { e.target.textContent = "🔊 만드는 중…"; await sentVoice(c); renderSents(); };
     row.querySelector('[data-act="go"]').onclick = () => { sel = c.id; seek(c.start); togglePlay(true); };
     row.querySelector('[data-act="vid"]').onclick = () => sentFind(c, row, "video");
     row.querySelector('[data-act="img"]').onclick = () => sentFind(c, row, "image");
@@ -565,6 +574,22 @@ function renderSents() {
     const vi = row.querySelector('[data-act="veoin"]'); if (vi) vi.onclick = () => veoImport(c, row);
     bindVeo(row, c);
   });
+}
+// 목소리(11-07 "음성도 자막 넣을 때 같이"): 이 문장 글(또는 읽는 법)로 8번 목소리를 만들어 소리 트랙에 넣고, 문장 길이를 목소리에 맞춰 뒤를 밀거나 당겨요
+async function sentVoice(c, quiet) {
+  const poll = setInterval(async () => { const st = await api("/api/tts/status", {}); if (st.state && !st.ready) ($("#voiceState") || {}).textContent = st.state; }, 1500);
+  const r = await api("/api/tts", { text: c.text, speak: c.speak || "", folder: projFolder() }); clearInterval(poll);
+  if (r.error) { if (!quiet) alert(r.error); else $("#voiceState").textContent = r.error; return false; }
+  c.speak = r.speak; await waitAllReady(); placeVoice(c, r.id, r.dur); return true;
+}
+function placeVoice(c, mid, dur) {
+  snap(); const pause = 0.45, slot = Math.max(1, dur + pause), oldEnd = c.start + c.dur, delta = slot - c.dur;
+  cutRange("A1", c.start, oldEnd);
+  P.clips.forEach((x) => { if (x.id !== c.id && x.start >= oldEnd - 1e-3) x.start += delta; });   // 뒤를 밀거나 당기기
+  P.clips.filter((x) => x.track === "V1" && x.start < oldEnd - 1e-3 && x.start + x.dur >= oldEnd - 0.05).forEach((x) => (x.dur = Math.max(0.3, x.dur + delta)));
+  c.dur = slot; c.voice = mid;
+  P.clips.push({ id: uid(), track: "A1", kind: "audio", media: mid, src: MEDIA[mid].rel || MEDIA[mid].path, start: c.start, in: 0, dur, vol: 1, speed: 1, voiceOf: c.id });
+  renderTL(); draw(); dirty();
 }
 function veoHtml(v) {
   const esc = (x) => String(x ?? "").replace(/</g, "&lt;");
@@ -598,16 +623,18 @@ async function sentFind(c, row, kind) {
     await waitAllReady(); placeInRange(f.ids[0], c.start, c.dur, items[+b.dataset.k].kind === "image"); b.textContent = "넣음 ✓"; renderSents();
   }));
 }
-function placeInRange(mid, st, d, isImg, extra) {   // 이 문장 구간[st, st+d]의 영상 트랙을 새 클립으로 바꿔요(겹친 클립은 자르거나 비켜요)
-  snap(); const en = st + d, m = MEDIA[mid];
-  for (const x of P.clips.filter((x) => x.track === "V1")) {
+function cutRange(track, st, en) {   // 트랙의 [st, en] 구간을 비워요(걸친 클립은 자르고, 안에 든 클립은 지움)
+  for (const x of P.clips.filter((x) => x.track === track)) {
     const xs = x.start, xe = x.start + x.dur; if (xe <= st + 1e-3 || xs >= en - 1e-3) continue;
     if (xs >= st && xe <= en) { P.clips = P.clips.filter((y) => y !== x); continue; }
-    if (xs < st && xe > en) { const n = splitAtRaw(x, en); x.dur = st - xs; continue; }
+    if (xs < st && xe > en) { splitAtRaw(x, en); x.dur = st - xs; continue; }
     if (xs < st) { x.dur = st - xs; x.fadeOut = 0; continue; }
     const cut = en - xs; x.in += cut * (x.speed || 1); x.start = en; x.dur -= cut; x.fadeIn = 0;
   }
-  P.clips = P.clips.filter((x) => !(x.track === "V1" && x.dur < 0.2));   // 자투리 정리
+  P.clips = P.clips.filter((x) => !(x.track === track && x.dur < 0.2));   // 자투리 정리
+}
+function placeInRange(mid, st, d, isImg, extra) {   // 이 문장 구간[st, st+d]의 영상 트랙을 새 클립으로 바꿔요(겹친 클립은 자르거나 비켜요)
+  snap(); const en = st + d, m = MEDIA[mid]; cutRange("V1", st, en);
   const c = { id: uid(), track: "V1", kind: isImg ? "image" : "video", media: mid, src: m.rel || m.path, start: st, in: 0, dur: isImg ? d : Math.min(d, m.dur), vol: 0, fit: "cover", zoom: 1, x: 0.5, y: 0.5, speed: 1, fadeIn: 0.3, ...(extra || {}) };
   if (isImg) { c.zoomEnd = 1.15; c.xEnd = 0.5; c.yEnd = 0.5; }
   if (!isImg && m.dur < d) c.speed = Math.max(0.5, +(m.dur / d).toFixed(2)), c.dur = d;   // 짧으면 살짝 느리게 해서 채워요

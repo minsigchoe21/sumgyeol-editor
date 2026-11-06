@@ -71,7 +71,7 @@ def make_assets(mid):
         if m["kind"] == "video":
             # 편집용 사본: 짧은 변 540, 30fps, 키프레임 촘촘히(탐색 빠르게)
             sc = "scale=-2:540" if m["w"] >= m["h"] else "scale=540:-2"
-            r = run(["-i", src, "-vf", sc + ",fps=30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-g", "15", "-pix_fmt", "yuv420p",
+            r = run(["-i", src, "-vf", sc + ",fps=30", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "fastdecode", "-crf", "27", "-g", "15", "-pix_fmt", "yuv420p",
                      "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart", os.path.join(d, "proxy.mp4")])
             if r.returncode: raise RuntimeError(r.stderr[-400:])
             run(["-ss", str(min(1.0, m["dur"] / 3)), "-i", src, "-frames:v", "1", "-vf", "scale=320:-2", os.path.join(d, "thumb.jpg")])
@@ -90,6 +90,18 @@ def make_assets(mid):
         m["status"] = "error"; m["error"] = str(e)
     save_db()
 
+# 사본 만들기는 한 번에 2개만(11-07 4K 영상 13개를 한꺼번에 돌려 PC가 멈추던 문제)
+import queue as _queue
+AQ = _queue.Queue(); AQ_N = {"waiting": 0}
+def _aworker():
+    while True:
+        mid = AQ.get(); AQ_N["waiting"] = max(0, AQ_N["waiting"] - 1)
+        try: make_assets(mid)
+        except Exception as e: log(f"assets error {mid}: {e}")
+def queue_assets(mid):
+    AQ_N["waiting"] += 1; AQ.put(mid)
+for _ in range(2): threading.Thread(target=_aworker, daemon=True).start()
+
 def import_paths(paths):
     out = []
     for p in paths:
@@ -103,7 +115,7 @@ def import_paths(paths):
         if kind == "image":
             pi = probe(p); info["w"], info["h"] = pi["w"], pi["h"]
         DB[mid] = {"id": mid, "name": os.path.basename(p), "path": p, "rel": rel_of(p), "kind": kind, "status": "working", "added": time.time(), **info}
-        save_db(); threading.Thread(target=make_assets, args=(mid,), daemon=True).start(); out.append(mid)
+        save_db(); queue_assets(mid); out.append(mid)
     return out
 
 def pick_files():
@@ -558,6 +570,51 @@ def prefetch(items):
             PREFETCH["fail"].append(f"{os.path.basename(dst)}: {e}")
     PREFETCH.update(state=f"다 받았어요({len(items) - len(PREFETCH['fail'])}/{len(items)})", done=True)
 
+# ---------------------------------------------------------------- 목소리(TTS) ----
+SCHEMAS_TTS = {"reading": {"type": "object", "properties": {"speak": S_STR}, "required": ["speak"]}}
+_KN = "영일이삼사오육칠팔구"
+def _sino(n):
+    if n == 0: return "영"
+    out = ""; units = [(100000000, "억"), (10000, "만")]
+    def four(x):
+        r = ""; 
+        for v, u in ((1000, "천"), (100, "백"), (10, "십"), (1, "")):
+            d = x // v; x %= v
+            if d: r += ("" if d == 1 and u else _KN[d]) + u
+        return r
+    for v, u in units:
+        if n >= v: out += four(n // v) + u; n %= v
+    return out + four(n)
+def naive_reading(t):
+    t = re.sub(r"(\d+)\s*%", lambda m: _sino(int(m.group(1))) + " 퍼센트", t)
+    t = re.sub(r"(\d+)\s*~\s*(\d+)", lambda m: _sino(int(m.group(1))) + "에서 " + _sino(int(m.group(2))), t)
+    t = re.sub(r"(\d+)\.(\d+)", lambda m: _sino(int(m.group(1))) + " 점 " + " ".join(_KN[int(c)] for c in m.group(2)), t)
+    return re.sub(r"\d+", lambda m: _sino(int(m.group(0))), t)
+def reading_of(text):
+    if not re.search(r"\d", text): return text
+    if keys().get("anthropic"):
+        SCHEMAS.update(SCHEMAS_TTS)
+        r = claude("한국어 내레이션 문장을 TTS가 정확히 읽도록 '읽는 대로' 바꿔 줘. 숫자·단위·기호를 한글로(예: 1970년대→천구백칠십년대, 3마리→세 마리, 15만→십오만, 2~3년→이삼 년, 90%→구십 퍼센트, 1제곱센티미터→일 제곱센티미터, 4분의 1→사분의 일). "
+                   "다른 낱말은 바꾸지 말고 문장부호는 그대로. answer 도구로 speak만 돌려줘.\n문장: " + text, 600, "reading")
+        if r.get("speak"): return r["speak"]
+    return naive_reading(text)
+def tts_make(text, speak, folder, sid=7, speed=1.15, tempo=0.94):
+    import tts_local, hashlib
+    speak = (speak or "").strip() or reading_of(text)
+    d = os.path.join(SOURCES, folder or "_목소리", "voice"); os.makedirs(d, exist_ok=True)
+    h = hashlib.md5(f"{speak}|{sid}|{speed}|{tempo}".encode()).hexdigest()[:10]; out = os.path.join(d, f"v_{h}.wav")
+    if not os.path.exists(out):
+        raw = os.path.join(DATA, f"tts_{h}_raw.wav"); tts_local.synth(DATA, speak, raw, sid, speed)
+        # 앞뒤 무음 자르기 + 8번 목소리 템포(0.94) + 48kHz
+        r = run(["-i", raw, "-af", f"silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.03,areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.06,areverse,atempo={tempo}",
+                 "-ar", "48000", "-ac", "1", out])
+        try: os.remove(raw)
+        except Exception: pass
+        if r.returncode: raise RuntimeError(r.stderr[-300:])
+    ids = import_paths([out])
+    for i in ids: DB[i]["credit"] = {"source": "claude", "license": "직접 제작(Supertonic TTS, 8번 목소리)", "title": text[:40], "cond": "free"}
+    save_db(); return {"id": ids[0], "speak": speak, "dur": probe(out)["dur"]}
+
 SAFE = re.compile(r"[^0-9A-Za-z가-힣_\-. ]")
 def proj_path(name): return os.path.join(PROJ, SAFE.sub("_", name).strip() or "제목없음") + ".shum"
 
@@ -719,6 +776,12 @@ class H(BaseHTTPRequestHandler):
             j = self._body(); return self._json(veo_prompt(j.get("text", ""), j.get("topic", ""), j.get("prev", ""), j.get("next", ""), j.get("note", "")))
         if p == "/api/veo_check":
             j = self._body(); return self._json(veo_check(j.get("id"), j.get("text", ""), j.get("prompt", ""), j.get("checklist", [])))
+        if p == "/api/tts":
+            j = self._body()
+            try: return self._json(tts_make(j.get("text", ""), j.get("speak", ""), j.get("folder", ""), int(j.get("sid", 7)), float(j.get("speed", 1.15)), float(j.get("tempo", 0.94))))
+            except Exception as e: log(f"tts error {e}"); return self._json({"error": f"목소리 만들기 오류: {e}"}, 500)
+        if p == "/api/tts/status":
+            import tts_local; return self._json(tts_local.STATE)
         if p == "/api/describe": return self._json(describe(self._body().get("items", [])[:40]))
         if p == "/api/fetch_pexels":   # API 키 없이: Pexels 영상 주소/번호로 바로 받기(11-06 Pexels 새 키 발급 중단)
             j = self._body(); m = re.findall(r"(\d{5,})", j.get("url", ""))
@@ -824,7 +887,7 @@ if __name__ == "__main__":
     import traceback
     try:
         for m in DB.values():   # 끊겼던 작업 다시
-            if m.get("status") == "working": threading.Thread(target=make_assets, args=(m["id"],), daemon=True).start()
+            if m.get("status") == "working": queue_assets(m["id"])
         s = serve(); log(f"child start {local_version()} pid {os.getpid()}")
         url = f"http://127.0.0.1:{PORT}"; print("숨결 편집기:", url, local_version(), f"(pid {os.getpid()}, 이 창을 닫으면 꺼져요)", flush=True)
         if "--no-browser" not in sys.argv: threading.Timer(0.8, lambda: webbrowser.open(url)).start()
