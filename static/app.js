@@ -263,10 +263,14 @@ function renderInsp() {
   if (c.track === "V1") h += `<div class="row"><button id="btnXf">앞 영상과 겹쳐 바뀌기(0.5초)</button></div>`;
   if (c.kind === "video" || c.kind === "audio") h += `<p class="dim" style="margin:10px 0 2px;font-size:12px">속도</p><div class="row" style="flex-wrap:wrap">${[0.25, 0.5, 0.75, 1, 1.5, 2, 4].map((v) => `<button data-sp="${v}" class="${(c.speed || 1) === v ? "on" : ""}" style="padding:3px 7px">${v === 1 ? "보통" : v < 1 ? "슬로 " + v + "×" : v + "× 빠르게"}</button>`).join("")}</div>`;
   if (c.kind === "video" || c.kind === "image") h += `<p class="dim" style="margin:10px 0 2px;font-size:12px">줌(클립 처음→끝)</p><div class="row" style="flex-wrap:wrap"><button data-zm="1,1.3">줌인</button><button data-zm="1.3,1">줌아웃</button><button data-zm="1,1.6">크게 줌인</button><button data-zm="off">줌 없음</button></div>` + (c.zoomEnd != null ? f("zoomEnd", "끝 확대", "range", 0.01, 'min="1" max="3"') + f("xEnd", "끝 가로 위치", "range", 0.01, 'min="0" max="1"') + f("yEnd", "끝 세로 위치", "range", 0.01, 'min="0" max="1"') : "");
+  if ((c.kind === "video" || c.kind === "image") && c.media) h += `<div style="margin-top:10px;padding:8px;border:1px solid var(--acc);border-radius:8px"><b style="font-size:12px">💬 이 장면 코멘트 → Claude가 고쳐요</b>
+    <textarea id="fixMemo" placeholder="예: 해달 얼굴이 잘 보이게 / 더 밝은 장면으로 / 성게가 나오는 걸로 / 너무 빨라" style="min-height:48px">${(c.memo || "").replace(/</g, "&lt;")}</textarea>
+    <button id="btnFix" style="width:100%">🤖 이 코멘트대로 고쳐 줘</button><div id="fixOut" class="dim" style="font-size:12px;margin-top:4px">${c.fixReply ? "🤖 " + c.fixReply.replace(/</g, "&lt;") : ""}</div></div>`;
   if (c.kind === "video" && c.media) h += `<div class="row"><button id="btnSim">🔗 이어 붙일 비슷한 영상 찾기</button></div>`;
   if (MEDIA[c.media]?.credit) { const cr = MEDIA[c.media].credit; h += `<p class="dim" style="font-size:11px">출처: ${cr.source} · ${cr.author} · ${cr.license}<br><a href="${cr.page}" target="_blank" style="color:#7fd0ff">${cr.page}</a></p>`; }
   box.innerHTML = h;
   const bs = $("#btnSim"); if (bs) bs.onclick = () => findSimilar(c.media);
+  const bf = $("#btnFix"); if (bf) { $("#fixMemo").oninput = (e) => { c.memo = e.target.value; dirty(); }; bf.onclick = () => clipFix(c); }
   box.querySelectorAll("[data-sp]").forEach((b) => (b.onclick = () => setSpeed(c, +b.dataset.sp)));
   box.querySelectorAll("[data-zm]").forEach((b) => (b.onclick = () => { if (b.dataset.zm === "off") { snap(); delete c.zoomEnd; c.zoom = 1; renderInsp(); draw(); } else { const [a, z] = b.dataset.zm.split(",").map(Number); setZoomAnim(c, a, z); } }));
   const bx = $("#btnXf"); if (bx) bx.onclick = () => { snap(); crossfade(c, 0.5); renderTL(); renderInsp(); draw(); };
@@ -705,6 +709,34 @@ async function arrangeAll() {
   undoS.splice(undoS.length - n, n);   // 한 번의 되돌리기(Ctrl+Z)로 재배치 전체를 돌려요
   renderTL(); draw(); dirty(); renderSents();
   $("#voiceState").textContent = `문장 ${n}개에 영상을 다시 붙였어요 ✓ (Ctrl+Z로 되돌리기)` + (r.notes ? " · " + r.notes : "");
+}
+// 🤖 클립 코멘트로 고치기: 대본(글자·목소리)은 그대로, 이 클립 구간의 화면만 바꿔요
+async function clipFix(c) {
+  const out = $("#fixOut"); const memo = ($("#fixMemo").value || "").trim(); if (!memo) { out.textContent = "코멘트를 먼저 적어 주세요"; return; }
+  c.memo = memo; out.textContent = "🤖 장면을 보고 고치는 중(20~40초)…";
+  const sent = P.clips.filter((x) => x.kind === "text" && x.start <= c.start + 0.05 && x.start + x.dur > c.start + 0.05)[0] || sentClips().find((x) => x.start + x.dur > c.start);
+  const f = "sources/" + projFolder() + "/";
+  const cand = Object.values(MEDIA).filter((m) => (m.kind === "video" || m.kind === "image") && (m.rel || "").startsWith(f) && !(m.rel || "").includes("/voice/")).map((m) => m.id);
+  const r = await api("/api/clip_fix", { id: c.media, text: sent?.text || "", comment: memo, cand, dur: c.dur, in: c.in || 0 });
+  if (r.error) { out.textContent = r.error; return; }
+  c.fixReply = r.reply_ko || ""; const st = c.start, d = c.dur;
+  if (r.action === "replace" && MEDIA[r.media]) {
+    const m = MEDIA[r.media], isImg = m.kind === "image", cin = isImg ? 0 : Math.max(0, Math.min(+r.clip_in || 0, Math.max(0, m.dur - Math.min(d, m.dur))));
+    const k = placeInRange(m.id, st, d, isImg, { in: cin, memo, fixReply: c.fixReply });
+    if (!isImg) { k.dur = d; k.speed = m.dur - cin < d ? Math.max(0.5, +((m.dur - cin) / d).toFixed(2)) : 1; }
+    renderTL(); renderInsp(); draw();
+  } else if (r.action === "adjust") {
+    snap(); for (const key of ["zoom", "zoomEnd", "x", "y", "speed"]) if (typeof r[key] === "number") c[key] = r[key];
+    if (typeof r.clip_in === "number") c.in = Math.max(0, r.clip_in);
+    if (r.zoomEnd != null) { c.xEnd = c.xEnd ?? c.x; c.yEnd = c.yEnd ?? c.y; }
+    renderTL(); renderInsp(); draw(); dirty();
+  } else if (r.action === "search") {
+    renderInsp(); $("#fixOut").textContent = "🤖 " + c.fixReply + " → 새 영상 후보를 찾는 중…";
+    document.querySelector('[data-tab="find"]').click(); $("#q").value = r.search_query || sent?.text || ""; $("#btnFind").click(); return;
+  } else if (r.action === "veo") {
+    if (sent) { sent.memo = (sent.memo ? sent.memo + " / " : "") + memo; document.querySelector('[data-tab="sent"]').click(); const row = document.querySelector(`.srow[data-id="${sent.id}"]`); if (row) await sentVeo(sent, row); }
+  }
+  dirty(); const o2 = $("#fixOut"); if (o2) o2.textContent = "🤖 " + c.fixReply;
 }
 function veoHtml(v) {
   const esc = (x) => String(x ?? "").replace(/</g, "&lt;");

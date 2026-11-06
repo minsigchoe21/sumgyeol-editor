@@ -45,3 +45,19 @@ def synth(data_dir, text, out_wav, sid=7, speed=1.15, steps=10):
     pcm = array.array("h", (max(-32767, min(32767, int(x * 32767))) for x in sm))
     with wave.open(out_wav, "wb") as w: w.setnchannels(1); w.setsampwidth(2); w.setframerate(a.sample_rate); w.writeframes(pcm.tobytes())
     return len(sm) / a.sample_rate
+
+def f0_median(wav_path):
+    """목소리 높낮이(기본 주파수) 중앙값(Hz). 문장마다 높낮이가 들쭉날쭉하지 않게 고를 때 써요(11-07)."""
+    try: import numpy as np
+    except ImportError: return None
+    with wave.open(wav_path, "rb") as w:
+        sr = w.getframerate(); x = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768
+    n = int(0.04 * sr); hop = n // 2; out = []; rms_all = float(np.sqrt(np.mean(x ** 2)) + 1e-9)
+    lo, hi = int(sr / 400), int(sr / 70)
+    for i in range(0, len(x) - n, hop):
+        f = x[i:i + n] - x[i:i + n].mean()
+        if np.sqrt(np.mean(f ** 2)) < rms_all * 0.6: continue
+        ac = np.correlate(f, f, "full")[n - 1:]
+        k = lo + int(np.argmax(ac[lo:hi]))
+        if ac[k] > 0.3 * ac[0]: out.append(sr / k)
+    return float(np.median(out)) if out else None

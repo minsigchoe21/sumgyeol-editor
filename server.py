@@ -406,6 +406,32 @@ def arrange(sentences, ids, topic):
         except Exception: x["media"] = None
     return r
 
+SCHEMAS_FIX = {"clip_fix": {"type": "object", "properties": {
+    "action": {"type": "string", "enum": ["replace", "adjust", "search", "veo"]}, "clip": S_STR, "clip_in": {"type": "number"},
+    "zoom": {"type": "number"}, "zoomEnd": {"type": "number"}, "x": {"type": "number"}, "y": {"type": "number"}, "speed": {"type": "number"},
+    "search_query": S_STR, "reply_ko": S_STR}, "required": ["action", "reply_ko"]}}
+def clip_fix(cur, text, comment, cand, dur, cur_in):
+    """🤖 클립 코멘트로 고치기(11-07 "영상을 클릭해 코멘트 남기면 수정"): 지금 클립 장면 + 이 편의 다른 클립을 보고, 코멘트대로 바꾸기/조정/새로 찾기/Veo 중 하나를 골라요."""
+    SCHEMAS.update(SCHEMAS_FIX)
+    if cur not in DB: return {"error": "지금 클립을 못 찾았어요"}
+    cand = [i for i in cand if i in DB and i != cur and DB[i]["kind"] in ("video", "image") and DB[i].get("status") == "ready"][:12]
+    content = [{"type": "text", "text": f"쇼츠 문장(대사): {text}\n이 구간 길이: {dur:.1f}초\n사용자 코멘트: {comment}\n\n"
+                f"지금 쓰는 클립(C0, {DB[cur]['name']}, 원본 {DB[cur]['dur']:.1f}초 중 {cur_in:.1f}초부터)의 장면이에요:"}]
+    for b in frames_b64(cur, 4): content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}})
+    content.append({"type": "text", "text": "바꿔 쓸 수 있는 이 편의 다른 클립들이에요:"})
+    for j, mid in enumerate(cand):
+        m = DB[mid]; content.append({"type": "text", "text": f"C{j + 1}: {m['name']} ({'사진' if m['kind'] == 'image' else str(round(m['dur'], 1)) + '초 영상'})"})
+        if m["kind"] == "video":
+            for b in frames_b64(mid, 2): content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}})
+    content.append({"type": "text", "text": "코멘트대로 하려면 무엇을 할지 하나 골라 줘. 대사(대본)는 절대 바꾸지 마.\n"
+        "- replace: 다른 클립(clip=C번호, clip_in=시작 초)으로 바꾸기\n- adjust: 지금 클립을 그대로 두고 clip_in(다른 구간)·zoom(1~2.5)·zoomEnd·x·y(0~1, 화면 위치)·speed(0.25~4) 조정\n"
+        "- search: 가진 클립에 맞는 게 없으면 새로 찾을 영어 검색어(search_query)\n- veo: 실사로 구하기 어려운 장면이면 Veo로 만들기\nreply_ko에 무엇을 왜 했는지 한국어 한두 문장. answer 도구로 돌려줘."})
+    r = claude(content, 1200, "clip_fix")
+    if r.get("action") == "replace":
+        try: r["media"] = cand[int(str(r.get("clip", "C1")).lstrip("Cc")) - 1]
+        except Exception: r["action"] = "search"; r.setdefault("search_query", text)
+    return r
+
 WONDER = ["bioluminescence", "murmuration starlings", "mimic octopus", "cuttlefish color change", "volcano lava flow", "aurora timelapse", "jellyfish swarm",
           "coral spawning", "humpback whale breach", "slime mold timelapse", "lightning storm slow motion", "glacier calving", "sardine run", "manta ray",
           "hummingbird slow motion", "mantis shrimp", "firefly synchronous", "sea otter", "chameleon tongue", "leafcutter ants", "geyser eruption", "sand dunes wind",
@@ -628,19 +654,35 @@ def reading_of(text):
                    "다른 낱말은 바꾸지 말고 문장부호는 그대로. answer 도구로 speak만 돌려줘.\n문장: " + text, 600, "reading")
         if r.get("speak"): return r["speak"]
     return naive_reading(text)
+REF_F0 = 110.0   # 8번 목소리 내레이션의 평소 높낮이(Hz, narr_v65·v66c에서 잼)
 def tts_make(text, speak, folder, sid=7, speed=1.15, tempo=0.94):
+    """한 문장 목소리. 높낮이가 들쭉날쭉하지 않게(11-07 "높낮이가 너무 다르고 어색"): 32단계로 3번 만들어 평소 높낮이(REF_F0)에 가장 가까운 것을 고르고,
+    말 빠르기를 초당 6.3음절로, 크기를 -16 LUFS로 맞춰요(우리 파이프라인과 같은 기준)."""
     import tts_local, hashlib
     speak = (speak or "").strip() or reading_of(text)
     d = os.path.join(SOURCES, folder or "_목소리", "voice"); os.makedirs(d, exist_ok=True)
-    h = hashlib.md5(f"{speak}|{sid}|{speed}|{tempo}".encode()).hexdigest()[:10]; out = os.path.join(d, f"v_{h}.wav")
+    h = hashlib.md5(f"{speak}|{sid}|{speed}|v2".encode()).hexdigest()[:10]; out = os.path.join(d, f"v_{h}.wav")
     if not os.path.exists(out):
-        raw = os.path.join(DATA, f"tts_{h}_raw.wav"); tts_local.synth(DATA, speak, raw, sid, speed)
-        # 앞뒤 무음 자르기 + 8번 목소리 템포(0.94) + 48kHz
-        r = run(["-i", raw, "-af", f"silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.03,areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.06,areverse,atempo={tempo}",
-                 "-ar", "48000", "-ac", "1", out])
-        try: os.remove(raw)
+        best = None
+        for k in range(3):
+            raw = os.path.join(DATA, f"tts_{h}_{k}.wav"); tts_local.synth(DATA, speak, raw, sid, speed, 32)
+            f0 = tts_local.f0_median(raw); score = abs((f0 or REF_F0) - REF_F0)
+            if best is None or score < best[0]: best = (score, raw, f0)
+            if f0 is None or score < 6: break   # 충분히 가까우면 그만
+        raw = best[1]
+        trim = os.path.join(DATA, f"tts_{h}_t.wav")
+        run(["-i", raw, "-af", "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.03,areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.06,areverse", trim])
+        syl = len(re.findall(r"[가-힣]", speak)) or 1; dur0 = probe(trim)["dur"] or 1
+        at = min(1.12, max(0.82, 6.3 / (syl / dur0))) * (tempo / 0.94)   # 초당 6.3음절로
+        r = run(["-i", trim, "-af", f"atempo={at:.3f},loudnorm=I=-16:TP=-1.5:LRA=7", "-ar", "48000", "-ac", "1", out])
+        for k in range(3):
+            for fn in (os.path.join(DATA, f"tts_{h}_{k}.wav"),):
+                try: os.remove(fn)
+                except Exception: pass
+        try: os.remove(trim)
         except Exception: pass
         if r.returncode: raise RuntimeError(r.stderr[-300:])
+        log(f"tts {h} f0={best[2]} tempo={at:.3f}")
     ids = import_paths([out])
     for i in ids: DB[i]["credit"] = {"source": "claude", "license": "직접 제작(Supertonic TTS, 8번 목소리)", "title": text[:40], "cond": "free"}
     save_db(); return {"id": ids[0], "speak": speak, "dur": probe(out)["dur"]}
@@ -812,6 +854,8 @@ class H(BaseHTTPRequestHandler):
             except Exception as e: log(f"tts error {e}"); return self._json({"error": f"목소리 만들기 오류: {e}"}, 500)
         if p == "/api/tts/status":
             import tts_local; return self._json(tts_local.STATE)
+        if p == "/api/clip_fix":
+            j = self._body(); return self._json(clip_fix(j.get("id"), j.get("text", ""), j.get("comment", ""), j.get("cand", []), float(j.get("dur", 3)), float(j.get("in", 0))))
         if p == "/api/arrange":
             j = self._body(); return self._json(arrange(j.get("sentences", []), j.get("ids", []), j.get("topic", "")))
         if p == "/api/describe": return self._json(describe(self._body().get("items", [])[:40]))
