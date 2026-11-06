@@ -306,13 +306,17 @@ def apply_update():
         os.replace(dst + ".tmp", dst)
     sb, nb = os.path.join(ROOT, "START.bat"), os.path.join(ROOT, "START.new.bat")
     if os.path.exists(nb) and os.path.exists(sb) and open(sb, "rb").read() == open(nb, "rb").read(): os.remove(nb)
-def restart():
-    time.sleep(0.5); print("[업데이트] 새 버전으로 다시 켜요…", local_version())
-    SERVER.shutdown(); SERVER.server_close()
+RESTART = False
+def restart():   # 응답을 보낸 뒤 serve_forever를 멈추고, 메인 스레드가 새 버전으로 다시 켜요
+    global RESTART
+    time.sleep(0.5); RESTART = True; SERVER.shutdown()
+def relaunch():
+    print("[업데이트] 새 버전으로 다시 켜요…", local_version(), flush=True)
+    SERVER.server_close()
     args = [a for a in sys.argv if a != "--no-browser"] + ["--no-browser"]
-    if os.name == "nt":
-        subprocess.Popen([sys.executable] + args, cwd=ROOT); os._exit(0)
-    else: os.execv(sys.executable, [sys.executable] + args)
+    if os.name == "nt":   # Windows: 같은 창에서 새 프로세스를 띄우고 기다림(창을 닫으면 같이 꺼짐)
+        raise SystemExit(subprocess.call([sys.executable] + args, cwd=ROOT))
+    os.execv(sys.executable, [sys.executable] + args)
 
 def serve():
     global SERVER
@@ -330,3 +334,4 @@ if __name__ == "__main__":
     if "--no-browser" not in sys.argv: threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try: s.serve_forever()
     except KeyboardInterrupt: pass
+    if RESTART: relaunch()
