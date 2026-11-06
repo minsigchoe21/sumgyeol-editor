@@ -119,7 +119,18 @@ def pick_files():
 
 # ---------------------------------------------------------------- 채널·대본 추천·영상 가져오기 ----
 import urllib.request, urllib.parse
-KEYF = os.path.join(os.path.expanduser("~"), ".sumgyeol_keys.json")   # 키는 사용자가 직접 이 파일에 적어요(채팅에 붙이지 않음)
+# 키 파일(11-07 "두 PC에서 같이"): 구글 드라이브 01_쇼츠\_private\sumgyeol_keys.json 을 두 PC가 같이 읽어요.
+# 01_쇼츠를 못 찾으면 이 PC의 ~\.sumgyeol_keys.json. 예전 PC 파일에 키가 있으면 드라이브 파일로 한 번 옮겨요.
+KEYF_LOCAL = os.path.join(os.path.expanduser("~"), ".sumgyeol_keys.json")
+KEYF = os.path.join(SHORTS, "_private", "sumgyeol_keys.json") if SHORTS else KEYF_LOCAL
+if KEYF != KEYF_LOCAL:
+    try:
+        os.makedirs(os.path.dirname(KEYF), exist_ok=True)
+        if os.path.exists(KEYF_LOCAL):
+            old = json.load(open(KEYF_LOCAL, encoding="utf-8")); cur = json.load(open(KEYF, encoding="utf-8")) if os.path.exists(KEYF) else {}
+            merged = {**old, **{k_: v_ for k_, v_ in cur.items() if v_}}
+            if merged != cur: json.dump(merged, open(KEYF, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    except Exception: pass
 def keys():
     try: return json.load(open(KEYF, encoding="utf-8"))
     except Exception: return {}
@@ -239,7 +250,7 @@ def search(q, source, orient):
     k = keys(); out = []
     try:
         if source == "pexels":
-            if not k.get("pexels"): return {"error": f"Pexels 키가 없어요. {KEYF}에 \"pexels\"를 적어 주세요."}
+            if not k.get("pexels"): return {"error": f"Pexels 키가 없어요. 🔑 키 설정에서 넣어 주세요."}
             u = "https://api.pexels.com/videos/search?" + urllib.parse.urlencode({"query": q, "per_page": 15, **({"orientation": orient} if orient else {})})
             for v in http_json(u, {"Authorization": k["pexels"]}).get("videos", []):
                 fs = [f for f in v.get("video_files", []) if f.get("file_type") == "video/mp4" and f.get("width")]
@@ -249,7 +260,7 @@ def search(q, source, orient):
                             "dl": best["link"], "page": v.get("url"), "author": v.get("user", {}).get("name", ""), "license": "Pexels License",
                             "title": re.sub(r"[-/]", " ", (v.get("url") or "").rstrip("/").split("/")[-1]).rsplit(" ", 1)[0]})
         elif source == "pixabay":
-            if not k.get("pixabay"): return {"error": f"Pixabay 키가 없어요. {KEYF}에 \"pixabay\"를 적어 주세요."}
+            if not k.get("pixabay"): return {"error": f"Pixabay 키가 없어요. 🔑 키 설정에서 넣어 주세요."}
             u = "https://pixabay.com/api/videos/?" + urllib.parse.urlencode({"key": k["pixabay"], "q": q, "per_page": 15, "safesearch": "true"})
             for v in http_json(u).get("hits", []):
                 vs = v.get("videos", {}); best = vs.get("large") if vs.get("large", {}).get("url") else vs.get("medium", {})

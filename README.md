@@ -27,6 +27,7 @@
 - Claude API 키: https://console.anthropic.com (대본 추천에만 씀, 쓴 만큼 요금)
 - Pexels API 키: https://www.pexels.com/api/ (무료)
 - Pixabay API 키: https://pixabay.com/api/docs/ (무료, 로그인 후 페이지에 보임)
+- (11-07) 키는 `01_쇼츠\_private\sumgyeol_keys.json`(구글 드라이브)에 저장돼 두 PC가 같이 써요. 예전 PC 파일(`~\.sumgyeol_keys.json`)에 있던 키는 처음 켤 때 자동으로 옮겨요. 이 파일은 남과 공유하지 마세요.
 - 없는 키는 빼도 돼요. 오른쪽 위에 ✓/✕로 보여요. 모델을 바꾸려면 `"model": "claude-sonnet-5-5"`처럼 추가.
 
 ## M1에서 되는 것

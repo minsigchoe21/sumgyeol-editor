@@ -503,7 +503,7 @@ $("#btnWonder").onclick = async () => {
   const r = await api("/api/wonder", condOpt()); showFound(r.items || []);
 };
 $("#btnKeys").onclick = () => {
-  modal(`<h3>키 설정</h3><p class="dim" style="font-size:12px">여기 넣은 키는 이 PC의 키 파일에만 저장돼요(채팅·Drive에 안 올라가요). 비워 두면 그대로 둬요.</p>
+  modal(`<h3>키 설정</h3><p class="dim" style="font-size:12px">여기 넣은 키는 구글 드라이브 01_쇼츠\\_private\\sumgyeol_keys.json 에 저장돼서 두 PC가 같이 써요(채팅에는 안 올라가요). 비워 두면 그대로 둬요.</p>
   <label>Pexels API 키 <a href="https://www.pexels.com/api/" target="_blank" style="color:#7fd0ff">받기</a><input id="kPx" type="password" style="width:100%"></label>
   <label>Pixabay API 키 <a href="https://pixabay.com/api/docs/" target="_blank" style="color:#7fd0ff">받기</a><input id="kPb" type="password" style="width:100%"></label>
   <label>Claude API 키 <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:#7fd0ff">받기</a><input id="kCl" type="password" style="width:100%"></label>
