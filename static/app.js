@@ -24,10 +24,11 @@ function snap() { undoS.push(JSON.stringify(P)); if (undoS.length > 200) undoS.s
 function undo() { if (!undoS.length) return; redoS.push(JSON.stringify(P)); P = JSON.parse(undoS.pop()); afterLoad(); }
 function redo() { if (!redoS.length) return; undoS.push(JSON.stringify(P)); P = JSON.parse(redoS.pop()); afterLoad(); }
 let saveTimer = null;
-function dirty() { $("#saveState").textContent = "저장 안 됨"; clearTimeout(saveTimer); saveTimer = setTimeout(save, 4000); }
+function dirty() { isDirty = true; $("#saveState").textContent = "저장 안 됨"; clearTimeout(saveTimer); saveTimer = setTimeout(save, 4000); }
+let isDirty = false;
 async function save() {
   P.name = $("#projName").value.trim() || "새 프로젝트";
-  const r = await api("/api/project", P); $("#saveState").textContent = r.ok ? "저장됨 " + new Date().toLocaleTimeString() : "저장 실패";
+  const r = await api("/api/project", P); if (r.ok) { isDirty = false; try { localStorage.setItem("lastProj", P.name); } catch (e) {} } $("#saveState").textContent = r.ok ? "저장됨 " + new Date().toLocaleTimeString() : "저장 실패";
 }
 
 // ------------------------------------------------------------ 미디어 ----
@@ -346,4 +347,22 @@ $("#srtFile").onchange = async (e) => {
 
 // ------------------------------------------------------------ 시작 ----
 window.ed = { get P() { return P; }, set P(v) { P = v; afterLoad(); }, addMediaClip, seek, togglePlay, MEDIA: () => MEDIA, loadMedia };
-(async () => { await initTop(); await loadMedia(); afterLoad(); })();
+// ------------------------------------------------------------ 켜 둔 채로 자동 업데이트 ----
+// 1분마다 GitHub 새 버전 확인 → 재생 중이 아니면 저장하고 적용 → 서버가 다시 켜지면 같은 프로젝트로 새로고침
+async function checkUpdate() {
+  try {
+    const r = await api("/api/update/check"); if (!r.update || playing) return;
+    if (P.clips.length) await save();
+    const ov = document.createElement("div"); ov.id = "updOv"; ov.textContent = `새 버전(${r.remote.slice(4)})으로 바꾸는 중… 잠깐만요`; document.body.appendChild(ov);
+    const a = await api("/api/update/apply", {}); if (a.error) { ov.textContent = a.error; setTimeout(() => ov.remove(), 4000); return; }
+    for (let i = 0; i < 60; i++) { await new Promise((res) => setTimeout(res, 1000)); try { const v = await api("/api/version"); if (v.version === r.remote) { location.reload(); return; } } catch (e) {} }
+    ov.textContent = "다시 켜지지 않았어요. START.bat을 다시 실행해 주세요.";
+  } catch (e) {}
+}
+setInterval(checkUpdate, 60000);
+(async () => {
+  await initTop(); await loadMedia();
+  let last = null; try { last = localStorage.getItem("lastProj"); } catch (e) {}
+  if (last) { const pj = await api("/api/project?name=" + encodeURIComponent(last)); if (pj && pj.clips) { P = pj; afterLoad(); relink(); setTimeout(checkUpdate, 3000); return; } }
+  afterLoad(); setTimeout(checkUpdate, 3000);
+})();

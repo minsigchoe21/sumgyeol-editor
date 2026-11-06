@@ -231,10 +231,11 @@ class H(BaseHTTPRequestHandler):
             if len(parts) == 4 and parts[2] in DB and parts[3] in ("proxy.mp4", "proxy.m4a", "proxy.jpg", "thumb.jpg", "strip.jpg", "wave.png"):
                 return self._file(os.path.join(MED, parts[2], parts[3]))
             return self.send_error(404)
-        if p == "/api/version":
-            try: v = open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
-            except Exception: v = "?"
-            return self._json({"version": v})
+        if p == "/api/version": return self._json({"version": local_version() or "?"})
+        if p == "/api/update/check":
+            try: rv = remote_version()
+            except Exception as e: return self._json({"local": local_version(), "error": str(e)})
+            return self._json({"local": local_version(), "remote": rv, "update": bool(rv) and rv != local_version()})
         if p == "/api/channels": return self._json(channels())
         if p == "/api/keys": k = keys(); return self._json({n: bool(k.get(n)) for n in ("anthropic", "pexels", "pixabay")} | {"file": KEYF, "shorts": SHORTS, "sources": SOURCES, "projects": PROJ})
         if p == "/api/credits": return self._json(json.load(open(CREDF, encoding="utf-8")) if os.path.exists(CREDF) else {})
@@ -259,6 +260,10 @@ class H(BaseHTTPRequestHandler):
             j = self._body(); f = proj_path(j.get("name", "제목없음")); tmp = f + ".tmp"
             json.dump(j, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=1); os.replace(tmp, f)
             return self._json({"ok": True, "path": f})
+        if p == "/api/update/apply":
+            try: apply_update()
+            except Exception as e: return self._json({"error": f"업데이트 실패: {e}"}, 500)
+            self._json({"ok": True, "version": local_version()}); threading.Thread(target=restart, daemon=True).start(); return
         if p == "/api/recommend":
             j = self._body(); return self._json(recommend(j.get("channel"), j.get("topic", ""), int(j.get("n", 14))))
         if p == "/api/search":
@@ -272,11 +277,51 @@ class H(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         self.send_error(404)
 
+# ---------------------------------------------------------------- 실행 중 자동 업데이트(11-06 "수정하고 껐다가 켜야 해?") ----
+REPO = "minsigchoe21/sumgyeol-editor"
+SERVER = None
+def local_version():
+    try: return open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
+    except Exception: return ""
+def remote_version():
+    req = urllib.request.Request(f"https://raw.githubusercontent.com/{REPO}/main/VERSION?t={time.time()}", headers={"Cache-Control": "no-cache"})
+    with urllib.request.urlopen(req, timeout=8) as r: return r.read().decode().strip()
+def apply_update():
+    import zipfile, tempfile, io
+    with urllib.request.urlopen(f"https://github.com/{REPO}/archive/refs/heads/main.zip", timeout=60) as r: data = r.read()
+    z = zipfile.ZipFile(io.BytesIO(data)); top = z.namelist()[0].split("/")[0]
+    for n in z.namelist():
+        if n.endswith("/"): continue
+        rel = n[len(top) + 1:]
+        if not rel or rel.startswith("projects/"): continue
+        dst = os.path.join(ROOT, *rel.split("/"))
+        if rel == "START.bat": dst = os.path.join(ROOT, "START.new.bat")   # 실행 중인 bat은 안 건드림
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst + ".tmp", "wb") as f: f.write(z.read(n))
+        os.replace(dst + ".tmp", dst)
+    sb, nb = os.path.join(ROOT, "START.bat"), os.path.join(ROOT, "START.new.bat")
+    if os.path.exists(nb) and os.path.exists(sb) and open(sb, "rb").read() == open(nb, "rb").read(): os.remove(nb)
+def restart():
+    time.sleep(0.5); print("[업데이트] 새 버전으로 다시 켜요…", local_version())
+    SERVER.shutdown(); SERVER.server_close()
+    args = [a for a in sys.argv if a != "--no-browser"] + ["--no-browser"]
+    if os.name == "nt":
+        subprocess.Popen([sys.executable] + args, cwd=ROOT); os._exit(0)
+    else: os.execv(sys.executable, [sys.executable] + args)
+
+def serve():
+    global SERVER
+    for i in range(40):   # 다시 켤 때 이전 프로세스가 포트를 놓을 때까지 기다림
+        try: SERVER = ThreadingHTTPServer(("127.0.0.1", PORT), H); break
+        except OSError: time.sleep(0.25)
+    else: raise SystemExit("포트 %d을 쓸 수 없어요. 편집기가 이미 켜져 있는지 확인하세요." % PORT)
+    return SERVER
+
 if __name__ == "__main__":
     for m in DB.values():   # 끊겼던 작업 다시
         if m.get("status") == "working": threading.Thread(target=make_assets, args=(m["id"],), daemon=True).start()
-    s = ThreadingHTTPServer(("127.0.0.1", PORT), H)
-    url = f"http://localhost:{PORT}"; print("숨결 편집기:", url, "(이 창을 닫으면 꺼져요)")
+    s = serve()
+    url = f"http://localhost:{PORT}"; print("숨결 편집기:", url, local_version(), "(이 창을 닫으면 꺼져요)")
     if "--no-browser" not in sys.argv: threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try: s.serve_forever()
     except KeyboardInterrupt: pass
