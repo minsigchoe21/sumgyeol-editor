@@ -670,10 +670,21 @@ def log(msg):
     try: open(LOGF, "a", encoding="utf-8").write(time.strftime("%m-%d %H:%M:%S ") + msg + "\n")
     except Exception: pass
 
+class Server(ThreadingHTTPServer):
+    # Windows에서 SO_REUSEADDR를 켜면 같은 포트에 서버가 두 개 붙을 수 있어요(옛 프로세스가 연결을 가로챔) → 끄고, 대신 독점 사용
+    allow_reuse_address = os.name != "nt"
+    daemon_threads = True
+    def server_bind(self):
+        if os.name == "nt":
+            import socket
+            try: self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            except Exception: pass
+        super().server_bind()
+
 def serve():
     global SERVER
     for i in range(40):   # 다시 켤 때 이전 프로세스가 포트를 놓을 때까지 기다림
-        try: SERVER = ThreadingHTTPServer(("127.0.0.1", PORT), H); break
+        try: SERVER = Server(("127.0.0.1", PORT), H); break
         except OSError: time.sleep(0.25)
     else: raise SystemExit("포트 %d을 쓸 수 없어요. 편집기가 이미 켜져 있는지 확인하세요." % PORT)
     return SERVER
@@ -701,7 +712,7 @@ if __name__ == "__main__":
         for m in DB.values():   # 끊겼던 작업 다시
             if m.get("status") == "working": threading.Thread(target=make_assets, args=(m["id"],), daemon=True).start()
         s = serve(); log(f"child start {local_version()} pid {os.getpid()}")
-        url = f"http://localhost:{PORT}"; print("숨결 편집기:", url, local_version(), "(이 창을 닫으면 꺼져요)", flush=True)
+        url = f"http://127.0.0.1:{PORT}"; print("숨결 편집기:", url, local_version(), f"(pid {os.getpid()}, 이 창을 닫으면 꺼져요)", flush=True)
         if "--no-browser" not in sys.argv: threading.Timer(0.8, lambda: webbrowser.open(url)).start()
         try: s.serve_forever()
         except KeyboardInterrupt: pass
