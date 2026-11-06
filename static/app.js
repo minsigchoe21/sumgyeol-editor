@@ -90,7 +90,9 @@ function renderTL() {
       e.preventDefault(); row.classList.remove("drop"); const mid = e.dataTransfer.getData("text/media"); if (!mid) return;
       const x = e.clientX - lane.getBoundingClientRect().left; addMediaClip(mid, snapTime(x / pps, null, tr.id), tr.id);
     });
-    lane.addEventListener("mousedown", (e) => { if (e.target === lane) { sel = null; seek((e.clientX - lane.getBoundingClientRect().left) / pps); renderTL(); renderInsp(); } });
+    lane.addEventListener("mousedown", (e) => { if (e.target === lane) { const tt = (e.clientX - lane.getBoundingClientRect().left) / pps;
+      if (isDbl("lane" + tr.id)) { joinGapAt(tr.id, tt); return; }
+      sel = null; seek(tt); renderTL(); renderInsp(); } });
     for (const c of P.clips.filter((c) => c.track === tr.id)) lane.appendChild(clipEl(c));
     tracks.appendChild(row);
   }
@@ -107,7 +109,11 @@ function clipEl(c) {
   if (c.kind === "audio" && m) { d.style.backgroundImage = `url(/media/${c.media}/wave.png)`; d.style.backgroundSize = `${(m.dur / (c.speed || 1)) * pps}px 100%`; d.style.backgroundPosition = `${-c.in / (c.speed || 1) * pps}px 0`; }
   const ov = c.kind === "video" && m ? c.dur - srcLeft(c) : 0;
   d.innerHTML = (ov > 0.05 ? `<div class="over" style="width:${ov * pps}px" title="원본이 ${ov.toFixed(1)}초 모자라요 → ↔ 빈틈 메우기"></div>` : "") + `<div class="cn"${c.kind === "text" ? ' style="white-space:normal;font-size:11px;line-height:1.25"' : ""}>${c.kind === "text" ? (c.n ? c.n + ". " : "T ") + (c.text || "").replace(/\n/g, " / ") : (m ? m.name : "?")}</div><div class="h l"></div><div class="h r"></div>${c.fadeIn ? `<div class="fade in" style="width:${c.fadeIn * pps}px"></div>` : ""}${c.fadeOut ? `<div class="fade out" style="width:${c.fadeOut * pps}px"></div>` : ""}`;
-  d.addEventListener("mousedown", (e) => startDrag(e, c, e.target.classList.contains("l") ? "l" : e.target.classList.contains("r") ? "r" : "m"));
+  d.addEventListener("mousedown", (e) => {
+    const r = d.getBoundingClientRect(), nearEnd = e.clientX > r.right - Math.max(14, r.width * 0.2);
+    if (nearEnd && isDbl("end" + c.id)) { e.preventDefault(); joinAfter(c); return; }   // 끝 더블클릭 = 다음 클립과 붙이기
+    startDrag(e, c, e.target.classList.contains("l") ? "l" : e.target.classList.contains("r") ? "r" : "m");
+  });
   return d;
 }
 function edges(exceptId) { const a = [0, t]; for (const c of P.clips) if (c.id !== exceptId) a.push(c.start, c.start + c.dur); return a; }
@@ -201,6 +207,25 @@ function fillGaps() {
 function rippleRange(a, b) {   // [a, b] 시간을 모든 트랙에서 빼고 뒤를 당겨요(싱크 유지)
   for (const tr of ["T1", "V1", "A1"]) cutRange(tr, a, b);
   P.clips.forEach((x) => { if (x.start >= b - 1e-3) x.start -= (b - a); });
+}
+// 끝 더블클릭으로 붙이기(11-07 "영상 끝에 더블클릭하면 영상 붙게"). 타임라인이 클릭마다 다시 그려져서 더블클릭을 직접 셉니다
+let _dbl = { k: "", t: 0 };
+function isDbl(key) { const now = performance.now(), hit = _dbl.k === key && now - _dbl.t < 400; _dbl = { k: hit ? "" : key, t: now }; return hit; }
+function nextOn(c) { return P.clips.filter((x) => x.track === c.track && x.id !== c.id && x.start >= c.start + c.dur - 0.02).sort((a, b) => a.start - b.start)[0]; }
+function joinAfter(c) {
+  const n = nextOn(c), end = c.start + c.dur;
+  if (!n) { flash("뒤에 붙일 클립이 없어요"); return; }
+  const g = n.start - end; if (g < 0.02) { flash("이미 붙어 있어요"); return; }
+  snap();
+  if (c.track === "V1") fillGap(c, n, g);   // 영상: 이 클립을 늘려 붙여요(자막 싱크 그대로)
+  else rippleRange(end, n.start);           // 글자·소리: 빈 시간을 모든 트랙에서 빼고 당겨요
+  renderTL(); draw(); dirty(); flash(c.track === "V1" ? "영상을 늘려 붙였어요" : "빈 시간을 빼고 붙였어요(영상·소리도 같이)");
+}
+function joinGapAt(track, tt) {   // 빈 곳 더블클릭: 그 빈틈을 붙여요
+  const prev = P.clips.filter((x) => x.track === track && x.start + x.dur <= tt + 0.01).sort((a, b) => b.start + b.dur - (a.start + a.dur))[0];
+  if (prev) { sel = prev.id; joinAfter(prev); return; }
+  const n = P.clips.filter((x) => x.track === track && x.start >= tt).sort((a, b) => a.start - b.start)[0];
+  if (n && n.start > 0.02) { snap(); if (track === "V1") fillGap(null, n, n.start); else rippleRange(0, n.start); renderTL(); draw(); dirty(); flash("앞 빈틈을 붙였어요"); }
 }
 function closeGaps() {   // 당겨 붙이기(11-07): 고른 클립의 트랙(없으면 글자 트랙)에서 빈틈을 찾아, 그 시간만큼 모든 트랙을 함께 당겨요
   const tr = clipById(sel)?.track || "T1"; const name = { T1: "글자", V1: "영상", A1: "소리" }[tr];
