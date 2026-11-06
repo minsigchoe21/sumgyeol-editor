@@ -72,3 +72,4 @@ footer#tl{position:absolute;left:0;right:0;bottom:0;height:250px;border-top:1px 
 .veo{font-size:12px;background:#1b1f27;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:6px}
 .veo textarea{min-height:110px;font-size:11px}
 .veo ul{margin:4px 0 4px 16px;padding:0}
+.mi.msel{outline:2px solid var(--acc)}

@@ -40,7 +40,8 @@ async function loadMedia() {
     const img = m.kind === "audio" ? (m.status === "ready" ? `/media/${m.id}/wave.png` : "") : (m.status === "ready" ? `/media/${m.id}/thumb.jpg` : "");
     d.innerHTML = `<img src="${img}" alt=""><div class="badge">${{ video: "영상", audio: "소리", image: "그림" }[m.kind]} ${m.kind !== "image" ? m.dur.toFixed(1) + "초" : ""}</div><div class="nm">${m.status === "working" ? "준비 중… " : m.status === "error" ? "오류 " : ""}${m.name}</div>`;
     d.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/media", m.id); });
-    d.addEventListener("dblclick", () => addMediaClip(m.id, null));
+    d.addEventListener("click", () => { MSEL = m.id; document.querySelectorAll(".mi").forEach((x) => x.classList.toggle("msel", x === d)); });
+    d.addEventListener("dblclick", () => insertMedia(m.id, false));
     if (m.kind === "video" && m.status === "ready") { const sb = document.createElement("button"); sb.textContent = "🔗"; sb.title = "이어 붙일 비슷한 영상 찾기"; sb.style.cssText = "position:absolute;top:3px;right:3px;padding:0 5px;font-size:12px"; sb.onclick = (e) => { e.stopPropagation(); findSimilar(m.id); }; d.appendChild(sb); }
     box.appendChild(d);
   });
@@ -52,6 +53,16 @@ async function loadMedia() {
 }
 $("#btnPick").onclick = async () => { $("#btnPick").textContent = "PC에서 파일을 고르세요…"; await api("/api/pick", {}); $("#btnPick").textContent = "＋ 파일 가져오기"; loadMedia(); };
 
+// 영상 붙이기(11-07 "영상 붙이기"): 미디어를 골라 재생선 자리에 끼워 넣기(,) / 덮어쓰기(.) — 프리미어와 같은 키
+let MSEL = null;
+function insertMedia(mid, overwrite) {
+  const m = MEDIA[mid]; if (!m || m.status !== "ready") return; const tr = trackFor(m.kind), d = m.kind === "image" ? 5 : m.dur;
+  snap();
+  if (overwrite) cutRange(tr, t, t + d);
+  else { const cut = P.clips.find((x) => x.track === tr && t > x.start + 0.01 && t < x.start + x.dur - 0.01); if (cut) splitAtRaw(cut, t); shiftAfter(tr, t, d, null); }
+  const c = { id: uid(), track: tr, kind: m.kind, media: mid, src: m.rel || m.path, start: t, in: 0, dur: d, vol: m.kind === "audio" ? 1 : 0, fit: "cover", zoom: 1, x: 0.5, y: 0.5, speed: 1 };
+  P.clips.push(c); sel = c.id; seek(t + d); renderTL(); renderInsp(); draw(); dirty(); flash(overwrite ? "덮어썼어요" : "끼워 넣었어요");
+}
 function trackFor(kind) { return TRACKS.find((tr) => tr.kinds.includes(kind)).id; }
 function addMediaClip(mid, at, trackId) {
   const m = MEDIA[mid]; if (!m || m.status !== "ready") return;
@@ -302,6 +313,8 @@ addEventListener("keydown", (e) => {
   if (e.code === "Space") { e.preventDefault(); togglePlay(); }
   else if (k === "s" || k === "c") splitAt();
   else if (k === "t") addText();
+  else if (e.key === "," && MSEL) insertMedia(MSEL, false);
+  else if (e.key === "." && MSEL) insertMedia(MSEL, true);
   else if (k === "q") rippleTrim("start");
   else if (k === "w") rippleTrim("end");
   else if (e.key === "Delete" || e.key === "Backspace") e.shiftKey ? rippleDel() : delSel();
