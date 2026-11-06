@@ -278,6 +278,81 @@ def search(q, source, orient):
         return {"error": f"검색 오류({source}): {e}"}
     return {"items": out}
 
+def search_images(q, source):
+    """사진·그림 검색(11-06 "여기에 쓸만한 사진 이미지 줘"). 결과는 영상 검색과 같은 모양 + kind=image."""
+    k = keys(); out = []
+    try:
+        if source == "pixabay":
+            if not k.get("pixabay"): return {"error": "Pixabay 키가 없어요."}
+            u = "https://pixabay.com/api/?" + urllib.parse.urlencode({"key": k["pixabay"], "q": q, "image_type": "photo", "per_page": 20, "safesearch": "true"})
+            for v in http_json(u).get("hits", []):
+                out.append({"kind": "image", "source": "pixabay", "id": str(v["id"]), "thumb": v.get("webformatURL"), "w": v.get("imageWidth"), "h": v.get("imageHeight"),
+                            "dl": v.get("largeImageURL"), "page": v.get("pageURL"), "author": v.get("user", ""), "license": "Pixabay Content License", "title": v.get("tags", "")})
+        elif source == "commons":
+            u = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode({"action": "query", "format": "json", "generator": "search", "gsrsearch": f"{q} filetype:bitmap",
+                "gsrnamespace": 6, "gsrlimit": 20, "prop": "imageinfo|categories", "cllimit": "max", "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 1920})
+            for pg in sorted(http_json(u, {"User-Agent": UA}).get("query", {}).get("pages", {}).values(), key=lambda x: x.get("index", 0)):
+                ii = (pg.get("imageinfo") or [{}])[0]; em = ii.get("extmetadata", {})
+                lic = re.sub("<[^>]+>", "", em.get("LicenseShortName", {}).get("value", "")).strip()
+                if not re.match(r"(?i)(public domain|pd|cc0|cc[- ]by)", lic) or re.search(r"(?i)(^|[\s-])(nc|nd)([\s-]|$)", lic): continue
+                if (ii.get("width") or 0) < 1000: continue
+                out.append({"kind": "image", "source": "commons", "id": str(pg["pageid"]), "thumb": ii.get("thumburl"), "w": ii.get("width"), "h": ii.get("height"),
+                            "dl": ii.get("thumburl") or ii.get("url"), "page": ii.get("descriptionurl"), "author": re.sub("<[^>]+>", "", em.get("Artist", {}).get("value", ""))[:80].strip(),
+                            "license": lic + (" ⚠검토 전" if any("license review" in c.get("title", "").lower() for c in pg.get("categories", [])) else ""), "title": pg.get("title", "")[5:]})
+        elif source == "nasa":
+            u = "https://images-api.nasa.gov/search?" + urllib.parse.urlencode({"q": q, "media_type": "image"})
+            for it in http_json(u, {"User-Agent": UA}).get("collection", {}).get("items", [])[:15]:
+                dt = (it.get("data") or [{}])[0]; th = next((l["href"] for l in it.get("links", []) if l.get("render") == "image"), None)
+                out.append({"kind": "image", "source": "nasa", "id": dt.get("nasa_id", ""), "thumb": th, "dl": it.get("href"), "page": f"https://images.nasa.gov/details/{urllib.parse.quote(dt.get('nasa_id', ''))}",
+                            "author": dt.get("center", "NASA"), "license": "NASA (public domain, check for third-party)", "title": dt.get("title", ""), "desc": (dt.get("description") or "")[:200]})
+    except Exception as e:
+        return {"error": f"사진 검색 오류({source}): {e}"}
+    return {"items": out}
+
+def sent_search(text, topic, channel, kind, level, review_ok, note=""):
+    """문장(자막) 하나에 맞는 영상/사진 후보: Claude가 문장을 보고 검색어를 만들고, 사용 조건대로 여러 출처에서 찾아요."""
+    SCHEMAS.update(SCHEMAS_EXTRA)
+    kws = [{"q": topic or text, "why": "주제"}]
+    r = claude(f"쇼츠 주제: {topic}\n이 문장(내레이션)에 맞는 화면을 무료 {'실사 영상' if kind == 'video' else '사진'}(Pixabay·위키미디어·NASA·Pexels)에서 찾으려고 해요.\n"
+               f"문장: {text}\n" + (f"사용자 요청: {note}\n" if note else "") +
+               "실제로 그런 자료가 있을 법한 구체적인 영어 검색어 5개를 만들고, why에 어떤 장면인지 한국어로 짧게. 문장의 동물·현상과 같은 종·같은 장면을 우선. answer 도구로 돌려줘.", 900, "similar")
+    if r.get("keywords"): kws = r["keywords"][:5]
+    k = keys(); srcs = [x for x in ("pixabay", "pexels") if k.get(x)] + ["commons", "nasa"]
+    if kind == "image": srcs = [x for x in ("pixabay",) if k.get(x)] + ["commons", "nasa"]
+    out, seen = [], set()
+    for kw in kws:
+        for src in srcs:
+            res = search(kw["q"], src, "") if kind == "video" else search_images(kw["q"], src)
+            for it in annotate(res.get("items", []), level, review_ok)[:3]:
+                key = it["source"] + str(it["id"])
+                if key in seen: continue
+                seen.add(key); it["kw"] = kw["q"]; it["why"] = kw.get("why", ""); it.setdefault("kind", "video"); out.append(it)
+    out.sort(key=lambda it: COND_RANK[it["cond"]])
+    return {"keywords": kws, "items": out, "error": r.get("error")}
+
+SCHEMAS_VEO = {
+  "veo": {"type": "object", "properties": {"prompt_en": S_STR, "shot_ko": S_STR, "camera_ko": S_STR, "light_ko": S_STR, "avoid_en": S_STR,
+          "checklist_ko": {"type": "array", "items": S_STR}, "tips_ko": {"type": "array", "items": S_STR}}, "required": ["prompt_en", "checklist_ko"]},
+  "veo_check": {"type": "object", "properties": {"pass": {"type": "boolean"}, "score": {"type": "integer"}, "good_ko": {"type": "array", "items": S_STR},
+          "issues_ko": {"type": "array", "items": S_STR}, "fix_prompt_en": S_STR}, "required": ["pass", "score", "issues_ko"]}}
+def veo_prompt(text, topic, prev, nxt, note):
+    """✨ 이 문장에 맞는 Veo(Flow) 프롬프트: 장면·클로즈업·카메라·빛·피할 것 + 검수 목록."""
+    SCHEMAS.update(SCHEMAS_VEO)
+    return claude(f"쇼츠 주제: {topic}\n앞 문장: {prev}\n이 문장: {text}\n뒤 문장: {nxt}\n" + (f"사용자 요청: {note}\n" if note else "") +
+        "이 문장 화면으로 쓸 Google Veo 3.1(Flow) 영상 프롬프트를 영어로 써 줘. 세로 9:16, 8초, 사실적인 자연 다큐 실사 느낌, 글자·로고·워터마크 없음, 사람 얼굴 없음. "
+        "프롬프트 안에 샷 크기(익스트림 클로즈업/클로즈업/미디엄/와이드), 카메라 움직임(느린 달리 인·고정·트래킹 등), 렌즈 느낌, 빛, 동물의 정확한 생김새(종의 특징)를 구체적으로. "
+        "shot_ko·camera_ko·light_ko는 한국어 설명, avoid_en은 넣지 말아야 할 것(negative), checklist_ko는 만들어진 영상을 검수할 항목(종 특징이 맞는지, 손발 수, 물리적으로 이상한 움직임, 글자 생김 등) 5~7개, "
+        "tips_ko는 Flow에서 더 잘 나오게 하는 요령 2~3개. answer 도구로 돌려줘.", 1800, "veo")
+def veo_check(mid, text, prompt, checklist):
+    """🔍 Veo로 만든 클립 검수: 장면 4장을 보고 문장·프롬프트·검수 목록과 맞는지, AI 티(손발·물리·글자)가 나는지."""
+    SCHEMAS.update(SCHEMAS_VEO)
+    if mid not in DB: return {"error": "클립을 못 찾았어요"}
+    content = [{"type": "text", "text": f"쇼츠 문장: {text}\nVeo 프롬프트: {prompt}\n검수 목록: {'; '.join(checklist or [])}\n"
+                "아래는 이 프롬프트로 만든 AI 영상의 장면 4장이에요. 자연 다큐 쇼츠에 써도 될지 엄격하게 검수해 줘: 종의 특징이 실제와 맞는지, 몸 구조·다리·지느러미 수, 물리적으로 이상한 움직임·녹아내림, "
+                "글자·워터마크, 문장 내용과 맞는지. score 0~100, pass는 70 이상이면 true, issues_ko·good_ko는 한국어, fix_prompt_en은 고친 프롬프트. answer 도구로 돌려줘."}]
+    for b in frames_b64(mid, 4): content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}})
+    return claude(content, 1500, "veo_check")
+
 WONDER = ["bioluminescence", "murmuration starlings", "mimic octopus", "cuttlefish color change", "volcano lava flow", "aurora timelapse", "jellyfish swarm",
           "coral spawning", "humpback whale breach", "slime mold timelapse", "lightning storm slow motion", "glacier calving", "sardine run", "manta ray",
           "hummingbird slow motion", "mantis shrimp", "firefly synchronous", "sea otter", "chameleon tongue", "leafcutter ants", "geyser eruption", "sand dunes wind",
@@ -295,6 +370,7 @@ def wonder(n_kw=6, level="attrib", review_ok=False):
     random.shuffle(out); out.sort(key=lambda it: COND_RANK[it["cond"]]); return {"items": out, "sources": srcs}
 
 UA = "sumgyeol-editor/1.0 (personal shorts editor)"
+BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 
 SCHEMAS_EXTRA = {"similar": {"type": "object", "properties": {"subject": S_STR, "keywords": {"type": "array", "items": {"type": "object", "properties": {
     "q": S_STR, "why": S_STR}, "required": ["q", "why"]}}}, "required": ["keywords"]}}
@@ -328,10 +404,10 @@ def similar(mid, level="attrib", review_ok=False):
                 seen.add(key); it["kw"] = kw["q"]; it["why"] = kw.get("why", ""); out.append(it)
     out.sort(key=lambda it: COND_RANK[it["cond"]])
     return {"subject": subject, "keywords": kws, "items": out}
-def nasa_file(href):
-    """NASA 항목의 파일 목록에서 가장 알맞은 mp4(orig > large > medium)를 골라요."""
+def nasa_file(href, kind="video"):
+    """NASA 항목의 파일 목록에서 가장 알맞은 파일(영상 mp4 / 그림 jpg, orig > large > medium)을 골라요."""
     files = http_json(href, {"User-Agent": UA})
-    mp4 = [f for f in files if f.lower().endswith(".mp4")]
+    mp4 = [f for f in files if f.lower().endswith((".mp4",) if kind == "video" else (".jpg", ".jpeg", ".png"))]
     for tag in ("~orig", "~large", "~medium", ""):
         for f in mp4:
             if tag in f: return f.replace("http://", "https://")
@@ -340,12 +416,14 @@ def nasa_file(href):
 def fetch(item, folder=None):
     """고른 영상을 받아 미디어로 가져오고, 출처를 credits.json에 적어요. folder = sources 안 편 폴더 이름."""
     d = os.path.join(SOURCES, folder) if folder else DL; os.makedirs(d, exist_ok=True)
-    dl = nasa_file(item["dl"]) if item["source"] == "nasa" else item["dl"]
-    ext = os.path.splitext(urllib.parse.urlparse(dl).path)[1].lower() or ".mp4"
-    if ext not in VIDEO_EXT: ext = ".mp4"
+    kind = item.get("kind", "video")
+    dl = nasa_file(item["dl"], kind) if item["source"] == "nasa" else item["dl"]
+    ext = os.path.splitext(urllib.parse.urlparse(dl).path)[1].lower() or (".mp4" if kind == "video" else ".jpg")
+    if kind == "video" and ext not in VIDEO_EXT: ext = ".mp4"
+    if kind == "image" and ext not in IMAGE_EXT: ext = ".jpg"
     name = f"{item['source']}_{SAFE.sub('_', str(item['id']))[:60]}{ext}"; dst = os.path.join(d, name)
     if not os.path.exists(dst):
-        req = urllib.request.Request(dl, headers={"User-Agent": UA if item["source"] in ("commons", "nasa") else "Mozilla/5.0 (sumgyeol-editor)"})
+        req = urllib.request.Request(dl, headers={"User-Agent": UA if item["source"] in ("commons", "nasa") else BROWSER_UA})
         with urllib.request.urlopen(req, timeout=600) as r, open(dst + ".part", "wb") as f: shutil.copyfileobj(r, f, 1 << 20)
         os.replace(dst + ".part", dst)
     cf = os.path.join(d, "credits.json")
@@ -459,7 +537,7 @@ def prefetch(items):
         try:
             url = it["url"]
             if url.startswith("nasa:"): url = nasa_file(url[5:])
-            req = urllib.request.Request(url, headers={"User-Agent": UA if "wikimedia" in url or "nasa" in url else "Mozilla/5.0 (sumgyeol-editor)"})
+            req = urllib.request.Request(url, headers={"User-Agent": UA if "wikimedia" in url or "nasa" in url else BROWSER_UA})
             with urllib.request.urlopen(req, timeout=900) as r, open(dst + ".part", "wb") as f: shutil.copyfileobj(r, f, 1 << 20)
             os.replace(dst + ".part", dst)
             if it.get("credit"):
@@ -605,6 +683,12 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/credits_text":   # 업로드 설명란에 붙일 출처 문구(이 폴더에서 받은 것 전부)
             folder = self._body().get("folder") or "_받은영상"; return self._json({"text": credits_text(folder)})
         if p == "/api/similar": j = self._body(); return self._json(similar(j.get("id"), j.get("level", "attrib"), bool(j.get("review"))))
+        if p == "/api/sent_search":
+            j = self._body(); return self._json(sent_search(j.get("text", ""), j.get("topic", ""), j.get("channel", "jigu"), j.get("kind", "video"), j.get("level", "attrib"), bool(j.get("review")), j.get("note", "")))
+        if p == "/api/veo_prompt":
+            j = self._body(); return self._json(veo_prompt(j.get("text", ""), j.get("topic", ""), j.get("prev", ""), j.get("next", ""), j.get("note", "")))
+        if p == "/api/veo_check":
+            j = self._body(); return self._json(veo_check(j.get("id"), j.get("text", ""), j.get("prompt", ""), j.get("checklist", [])))
         if p == "/api/describe": return self._json(describe(self._body().get("items", [])[:40]))
         if p == "/api/fetch_pexels":   # API 키 없이: Pexels 영상 주소/번호로 바로 받기(11-06 Pexels 새 키 발급 중단)
             j = self._body(); m = re.findall(r"(\d{5,})", j.get("url", ""))

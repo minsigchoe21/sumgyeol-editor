@@ -313,8 +313,9 @@ async function relink() {   // 다른 PC에서 저장한 프로젝트면 src로 
   const need = (P.fetch || []).filter((f) => miss.includes(f.src));
   if (need.length) {   // Claude가 만든 초안: 영상·내레이션을 이 PC가 직접 받아요
     await api("/api/prefetch", { fetch: need }); const ov = document.createElement("div"); ov.id = "updOv"; document.body.appendChild(ov);
-    for (;;) { const st = await api("/api/prefetch/status", {}); ov.textContent = "초안 재료 " + (st.state || "받는 중…"); if (st.done) break; await new Promise((r) => setTimeout(r, 1500)); }
+    let st = {}; for (;;) { st = await api("/api/prefetch/status", {}); ov.textContent = "초안 재료 " + (st.state || "받는 중…"); if (st.done) break; await new Promise((r) => setTimeout(r, 1500)); }
     setTimeout(() => ov.remove(), 2500);
+    if (st.fail?.length) alert("못 받은 재료가 있어요:\n" + st.fail.join("\n") + "\n\n문장 탭에서 그 문장의 🎬 쓸만한 영상으로 바꿔 넣을 수 있어요.");
   }
   const map = await api("/api/resolve", { srcs: miss }); await loadMedia();
   P.clips.forEach((c) => { if (c.media && !MEDIA[c.media] && map[c.src]) c.media = map[c.src]; });
@@ -531,6 +532,100 @@ $("#srtFile").onchange = async (e) => {
   subs.forEach((s, i) => P.clips.push({ id: uid(), track: "T1", kind: "text", fromSrt: true, start: s.a, in: 0, dur: Math.max(0.2, s.b - s.a), text: s.text, size: 52, color: "#ffffff", y: 0.7, stroke: 7, n: i + 1 }));
   e.target.value = ""; renderTL(); draw();
 };
+
+// ------------------------------------------------------------ 문장 탭(11-06 "자막을 고치고 코멘트로 영상·사진·Veo 요청") ----
+const sentClips = () => P.clips.filter((c) => c.kind === "text").sort((a, b) => a.start - b.start);
+function projFolder() {
+  if (P.folder) return P.folder;
+  const v = P.clips.find((c) => (c.src || "").startsWith("sources/")); if (v) return v.src.split("/")[1];
+  return folderOf();
+}
+function vAt(tt) { return P.clips.filter((c) => c.track === "V1" && tt >= c.start && tt < c.start + c.dur).sort((a, b) => b.start - a.start)[0]; }
+function renderSents() {
+  const box = $("#sentList"); if (!box) return; const ss = sentClips();
+  if (!ss.length) { box.innerHTML = '<p class="dim">글자 트랙에 문장이 없어요. 대본 추천이나 자막(.srt) 불러오기로 넣어 주세요.</p>'; return; }
+  box.innerHTML = ss.map((c, i) => { const v = vAt(c.start + Math.min(0.5, c.dur / 2)); const th = v && MEDIA[v.media] ? (MEDIA[v.media].kind === "image" ? `/media/${v.media}/thumb.jpg` : `/media/${v.media}/thumb.jpg`) : "";
+    return `<div class="srow" data-id="${c.id}"><div class="hdr"><b>${c.n || i + 1}</b> ${fmt(c.start)} · ${c.dur.toFixed(1)}초 <button data-act="go" title="이 문장으로 가서 재생">▶</button>${v?.ai ? ' <span style="color:#ff8a65">AI</span>' : ""}${th ? `<img src="${th}" title="지금 화면: ${MEDIA[v.media].name}">` : '<img alt="">'}</div>
+    <textarea data-act="text">${(c.text || "").replace(/</g, "&lt;")}</textarea>
+    <input class="memo" data-act="memo" placeholder="코멘트·요청(예: 해달이 털 고르는 클로즈업, 바다 위에서)" value="${(c.memo || "").replace(/"/g, "&quot;")}">
+    <div class="btns"><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}</div>
+    <div class="res">${c.veo ? veoHtml(c.veo) : ""}</div></div>`; }).join("");
+  box.querySelectorAll(".srow").forEach((row) => {
+    const c = clipById(row.dataset.id);
+    row.querySelector('[data-act="text"]').oninput = (e) => { c.text = e.target.value; draw(); renderTL(); dirty(); };
+    row.querySelector('[data-act="memo"]').oninput = (e) => { c.memo = e.target.value; dirty(); };
+    row.querySelector('[data-act="go"]').onclick = () => { sel = c.id; seek(c.start); togglePlay(true); };
+    row.querySelector('[data-act="vid"]').onclick = () => sentFind(c, row, "video");
+    row.querySelector('[data-act="img"]').onclick = () => sentFind(c, row, "image");
+    row.querySelector('[data-act="veo"]').onclick = () => sentVeo(c, row);
+    const vi = row.querySelector('[data-act="veoin"]'); if (vi) vi.onclick = () => veoImport(c, row);
+    bindVeo(row, c);
+  });
+}
+function veoHtml(v) {
+  const esc = (x) => String(x ?? "").replace(/</g, "&lt;");
+  return `<div class="veo"><b>✨ Veo 프롬프트</b> <button data-act="cp" style="font-size:11px;padding:1px 6px">복사</button> <a href="https://labs.google/fx/tools/flow" target="_blank" style="color:#7fd0ff">Flow 열기</a>
+  <textarea readonly>${esc(v.prompt_en)}${v.avoid_en ? "\n\nAvoid: " + esc(v.avoid_en) : ""}</textarea>
+  ${v.shot_ko ? `<div>📷 샷: ${esc(v.shot_ko)}</div>` : ""}${v.camera_ko ? `<div>🎥 카메라: ${esc(v.camera_ko)}</div>` : ""}${v.light_ko ? `<div>💡 빛: ${esc(v.light_ko)}</div>` : ""}
+  ${(v.tips_ko || []).length ? `<div>요령:<ul>${v.tips_ko.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>` : ""}
+  <div>검수 항목:<ul>${(v.checklist_ko || []).map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>
+  <div class="dim">Flow에서 9:16·8초로 만들고 받은 파일을 "📥 Veo 클립 넣고 검수"로 넣으세요. AI 영상은 유튜브 업로드 때 "변경되거나 합성된 콘텐츠: 예"로 표시해요(수익 창출 가능).</div>
+  ${v.check ? checkHtml(v.check) : ""}</div>`;
+}
+function checkHtml(r) {
+  const esc = (x) => String(x ?? "").replace(/</g, "&lt;");
+  return `<div style="margin-top:6px;padding:6px;border-radius:6px;background:${r.pass ? "#1d3324" : "#3a2020"}"><b>🔍 검수 ${r.pass ? "통과" : "다시 만들기 권장"} (${r.score}점)</b>
+  ${(r.good_ko || []).length ? `<div>좋은 점:<ul>${r.good_ko.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>` : ""}
+  ${(r.issues_ko || []).length ? `<div>문제:<ul>${r.issues_ko.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>` : ""}
+  ${r.fix_prompt_en ? `<div>고친 프롬프트:<textarea readonly style="min-height:70px">${esc(r.fix_prompt_en)}</textarea></div>` : ""}</div>`;
+}
+function bindVeo(row, c) { const b = row.querySelector('[data-act="cp"]'); if (b) b.onclick = () => { navigator.clipboard?.writeText(c.veo.prompt_en + (c.veo.avoid_en ? "\n\nAvoid: " + c.veo.avoid_en : "")); b.textContent = "복사됨"; }; }
+async function sentFind(c, row, kind) {
+  const res = row.querySelector(".res"); res.innerHTML = `<p class="dim">이 문장에 맞는 ${kind === "video" ? "영상" : "사진"}을 찾는 중(20~40초)…</p>`;
+  const r = await api("/api/sent_search", { text: c.text, note: c.memo || "", topic: $("#topic").value || P.name, channel: $("#chSel").value, kind, ...condOpt() });
+  const items = r.items || [];
+  if (!items.length) { res.innerHTML = `<p class="dim">못 찾았어요. ${r.error || "코멘트에 원하는 장면을 영어/한국어로 적고 다시 눌러 보세요."}</p>`; return; }
+  const esc = (x) => String(x ?? "").replace(/[<>&"]/g, (ch) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[ch]));
+  res.innerHTML = `<div class="dim" style="font-size:11px">검색어: ${(r.keywords || []).map((k) => k.q).join(", ")}</div><div class="grid">` + items.slice(0, 12).map((it, i) => `<div class="fi"><img src="${esc(it.thumb)}" loading="lazy"><div class="meta"><span style="display:inline-block;padding:0 4px;border-radius:4px;background:${COND_COLOR[it.cond] || "#888"};color:#111;font-weight:700">${esc(it.cond_ko)}</span><br>${esc(it.why || "")}<br>${SRC_NAME[it.source] || it.source}${it.dur ? " · " + it.dur + "초" : ""} <a href="${esc(it.page)}" target="_blank" style="color:#7fd0ff">원본</a></div><button data-k="${i}">이 문장에 넣기</button></div>`).join("") + "</div>";
+  res.querySelectorAll("[data-k]").forEach((b) => (b.onclick = async () => {
+    b.textContent = "받는 중…"; b.disabled = true;
+    const f = await api("/api/fetch", { ...items[+b.dataset.k], folder: projFolder() });
+    if (f.error || !f.ids?.length) { b.textContent = "실패"; b.title = f.error || ""; return; }
+    await waitAllReady(); placeInRange(f.ids[0], c.start, c.dur, items[+b.dataset.k].kind === "image"); b.textContent = "넣음 ✓"; renderSents();
+  }));
+}
+function placeInRange(mid, st, d, isImg, extra) {   // 이 문장 구간[st, st+d]의 영상 트랙을 새 클립으로 바꿔요(겹친 클립은 자르거나 비켜요)
+  snap(); const en = st + d, m = MEDIA[mid];
+  for (const x of P.clips.filter((x) => x.track === "V1")) {
+    const xs = x.start, xe = x.start + x.dur; if (xe <= st + 1e-3 || xs >= en - 1e-3) continue;
+    if (xs >= st && xe <= en) { P.clips = P.clips.filter((y) => y !== x); continue; }
+    if (xs < st && xe > en) { const n = splitAtRaw(x, en); x.dur = st - xs; continue; }
+    if (xs < st) { x.dur = st - xs; x.fadeOut = 0; continue; }
+    const cut = en - xs; x.in += cut * (x.speed || 1); x.start = en; x.dur -= cut; x.fadeIn = 0;
+  }
+  P.clips = P.clips.filter((x) => !(x.track === "V1" && x.dur < 0.2));   // 자투리 정리
+  const c = { id: uid(), track: "V1", kind: isImg ? "image" : "video", media: mid, src: m.rel || m.path, start: st, in: 0, dur: isImg ? d : Math.min(d, m.dur), vol: 0, fit: "cover", zoom: 1, x: 0.5, y: 0.5, speed: 1, fadeIn: 0.3, ...(extra || {}) };
+  if (isImg) { c.zoomEnd = 1.15; c.xEnd = 0.5; c.yEnd = 0.5; }
+  if (!isImg && m.dur < d) c.speed = Math.max(0.5, +(m.dur / d).toFixed(2)), c.dur = d;   // 짧으면 살짝 느리게 해서 채워요
+  P.clips.push(c); sel = c.id; renderTL(); renderInsp(); draw(); dirty(); return c;
+}
+async function sentVeo(c, row) {
+  const ss = sentClips(), i = ss.indexOf(c); const res = row.querySelector(".res"); res.innerHTML = '<p class="dim">이 문장에 맞는 Veo 프롬프트를 쓰는 중…</p>';
+  const r = await api("/api/veo_prompt", { text: c.text, note: c.memo || "", topic: $("#topic").value || P.name, prev: ss[i - 1]?.text || "", next: ss[i + 1]?.text || "" });
+  if (r.error) { res.innerHTML = `<p style="color:#ff8a65">${r.error}</p>`; return; }
+  c.veo = r; dirty(); renderSents();
+}
+async function veoImport(c, row) {
+  const before = new Set(Object.keys(MEDIA)); const res = row.querySelector(".res");
+  res.insertAdjacentHTML("beforeend", '<p class="dim">PC에서 Veo로 만든 파일을 고르세요…</p>');
+  await api("/api/pick", {}); await waitAllReady();
+  const mid = Object.keys(MEDIA).find((id) => !before.has(id) && MEDIA[id].kind === "video"); if (!mid) { renderSents(); return; }
+  placeInRange(mid, c.start, c.dur, false, { ai: true, veoPrompt: c.veo.prompt_en });
+  res.insertAdjacentHTML("beforeend", '<p class="dim">🔍 Claude가 장면을 보고 검수하는 중…</p>');
+  const r = await api("/api/veo_check", { id: mid, text: c.text, prompt: c.veo.prompt_en, checklist: c.veo.checklist_ko });
+  c.veo.check = r.error ? { pass: false, score: 0, issues_ko: [r.error] } : r; dirty(); renderSents();
+}
+document.querySelector('[data-tab="sent"]').addEventListener("click", renderSents);
 
 // ------------------------------------------------------------ 시작 ----
 window.ed = { get P() { return P; }, set P(v) { P = v; afterLoad(); }, addMediaClip, seek, togglePlay, MEDIA: () => MEDIA, loadMedia };

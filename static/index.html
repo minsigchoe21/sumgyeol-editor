@@ -18,11 +18,15 @@
 </header>
 <main>
   <section id="left">
-    <nav class="tabs"><button data-tab="media" class="on">미디어</button><button data-tab="script">대본 추천</button><button data-tab="find">영상 찾기</button></nav>
+    <nav class="tabs"><button data-tab="media" class="on">미디어</button><button data-tab="sent">문장</button><button data-tab="script">대본 추천</button><button data-tab="find">영상 찾기</button></nav>
     <div id="tab-media" class="tab on">
       <div class="row"><button id="btnPick">＋ 파일 가져오기</button></div>
       <div class="row"><button id="btnSrt">＋ 자막(.srt) 불러오기</button><input id="srtFile" type="file" accept=".srt,.txt" class="hidden"></div>
       <div id="mediaList"></div>
+    </div>
+    <div id="tab-sent" class="tab">
+      <p class="dim" style="font-size:12px;margin:4px 0">문장(자막)을 고치고, 문장마다 화면을 찾거나 Veo 프롬프트를 받아요. 고친 글은 바로 저장돼요.</p>
+      <div id="sentList"></div>
     </div>
     <div id="tab-script" class="tab">
       <label>채널 <select id="chSel"></select></label>
