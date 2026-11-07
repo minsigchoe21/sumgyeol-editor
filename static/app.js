@@ -1304,13 +1304,20 @@ function renderEasy() {
   if (st === "script") bindScript(box); else if (st === "build") bindBuild(box); else if (st === "review") bindReview(box); else bindUpload(box);
 }
 // ---- ① 대본 확인
+const FEEL_EX = ["다큐처럼 차분하고 신뢰감 있게", "미스터리·반전으로 끝까지 궁금하게", "유머러스하고 가볍게", "감동적이고 여운 있게", "빠른 템포, 숫자로 놀라게", "아이에게 설명하듯 쉽게"];
+function newScriptForm(again) {
+  const e = EASY.nf || (EASY.nf = { ch: "jigu", topic: EASY.topic || "", feel: "", len: "" });
+  return `<div class="ehero"${again ? ' style="margin:6px 0 18px;max-width:none;border:1px solid var(--acc);border-radius:10px;padding:12px"' : ""}><h2>${again ? "🔄 대본 새로 받기" : "새 영상 시작"}</h2><p class="dim">주제와 원하는 느낌을 적으면 Claude가 대본을 써요. 장르는 상관없어요.${again ? " <b>지금 대본은 바뀌어요(↶ 되돌리기 가능).</b>" : ' (Claude가 채팅에서 만든 초안은 위 <b>열기</b> → "Claude가 만든 초안")'}</p>
+    <label>채널 <select id="eCh"><option value="jigu"${e.ch === "jigu" ? " selected" : ""}>지구의숨결(자연·과학 규칙)</option><option value="sobang"${e.ch === "sobang" ? " selected" : ""}>소방해부학(소방 설비 규칙)</option><option value="free"${e.ch === "free" ? " selected" : ""}>채널 규칙 없이 자유롭게(장르 불문)</option></select></label>
+    <label>주제 <input id="eTopic" placeholder="예: 해달이 켈프 숲을 지키는 이유 / 우리 동네 고양이 / 커피의 역사" value="${esc(e.topic)}"></label>
+    <label>원하는 느낌·분위기 <textarea id="eFeel" rows="3" placeholder="자유롭게 설명해 주세요. 예) 처음엔 귀엽게 시작했다가 반전으로 진지해지는 느낌, 마지막은 질문으로 끝내기 / 친구한테 수다 떨듯 반말로">${esc(e.feel)}</textarea></label>
+    <div class="erow" style="margin-top:-6px">${FEEL_EX.map((x) => `<button class="chip" data-feel="${esc(x)}">${esc(x)}</button>`).join("")}</div>
+    <label>길이 <select id="eN">${[["", "Claude가 알아서(주제·느낌에 맞게)"], ["30", "짧게(약 30초)"], ["60", "보통(약 1분)"], ["90", "길게(약 1분 30초)"]].map(([v, l]) => `<option value="${v}"${e.len === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+    <div class="row" style="gap:6px"><button id="eWrite" class="big pri" style="flex:1"${EASY.running ? " disabled" : ""}>${EASY.running ? "📝 대본 쓰는 중(20~60초)…" : "📝 Claude에게 대본 받기"}</button>${again ? '<button id="eNfClose" class="big">닫기</button>' : ""}</div><div id="eMsg" class="dim"></div></div>`;
+}
 function easyScript(ss) {
-  if (!ss.length) return `<div class="ehero"><h2>새 영상 시작</h2><p class="dim">주제만 적으면 Claude가 대본을 써요. (Claude가 채팅에서 만든 초안은 위 <b>열기</b> → "Claude가 만든 초안")</p>
-    <label>채널 <select id="eCh"><option value="jigu">지구의숨결</option><option value="sobang">소방해부학</option></select></label>
-    <label>주제 <input id="eTopic" placeholder="예: 해달이 켈프 숲을 지키는 이유" value="${esc(EASY.topic || "")}"></label>
-    <label>문장 수 <input id="eN" type="number" value="15" min="6" max="30"></label>
-    <button id="eWrite" class="big pri"${EASY.running ? " disabled" : ""}>${EASY.running ? "📝 대본 쓰는 중(20~60초)…" : "📝 Claude에게 대본 받기"}</button><div id="eMsg" class="dim"></div></div>`;
-  return `<div class="ehead"><b>대본을 읽고 고쳐 주세요</b><span class="dim"> · 글을 바로 고치거나, 방향을 적고 ✨ 추천 · ${ss.length}문장 · 약 ${ss.reduce((a, c) => a + estDur(c.text), 0).toFixed(0)}초</span></div>
+  if (!ss.length) return newScriptForm(false);
+  return (EASY.again ? newScriptForm(true) : "") + `<div class="ehead"><b>대본을 읽고 고쳐 주세요</b><span class="dim"> · 글을 바로 고치거나, 방향을 적고 ✨ 추천 · ${ss.length}문장 · 약 ${ss.reduce((a, c) => a + estDur(c.text), 0).toFixed(0)}초</span><span class="grow"></span>${EASY.again ? "" : '<button id="eAgain" style="font-size:12px">🔄 대본 새로 받기</button>'}</div>
     ${ss.map((c, k) => `${k === 0 ? `<button class="eadd" data-add="^">＋ 여기에 문장 넣기</button>` : ""}<div class="ecard" data-id="${c.id}"><div class="eno">${c.n || k + 1}</div><div class="emain">
       <textarea data-e="text" rows="2">${esc(c.text)}</textarea>
       <div class="erow"><input data-e="dir" placeholder="원하는 방향(예: 질문으로 시작, 더 짧게)" value="${esc(c.dirAsk || "")}"><button data-e="sug">✨ 추천</button><button data-e="prf" title="맞춤법·흐름 다듬기">✍ 첨삭</button><button data-e="del" title="이 문장 지우기">🗑</button></div>
@@ -1321,16 +1328,26 @@ function easyScript(ss) {
 }
 function bindScript(box) {
   const w = box.querySelector("#eWrite");
-  if (w) { box.querySelector("#eTopic").oninput = (e) => (EASY.topic = e.target.value);
+  const ag = box.querySelector("#eAgain"); if (ag) ag.onclick = () => { EASY.again = true; renderEasy(); box.querySelector(".ebody").scrollTop = 0; };
+  if (w) {
+    const e = EASY.nf; const sync = () => { e.ch = box.querySelector("#eCh").value; e.topic = box.querySelector("#eTopic").value; e.feel = box.querySelector("#eFeel").value; e.len = box.querySelector("#eN").value; };
+    ["#eCh", "#eTopic", "#eFeel", "#eN"].forEach((k) => (box.querySelector(k).oninput = box.querySelector(k).onchange = sync));
+    box.querySelectorAll("[data-feel]").forEach((b) => (b.onclick = () => { sync(); e.feel = (e.feel.trim() ? e.feel.trim() + ", " : "") + b.dataset.feel; renderEasy(); }));
+    const cl = box.querySelector("#eNfClose"); if (cl) cl.onclick = () => { EASY.again = false; renderEasy(); };
     w.onclick = async () => {
-      const topic = box.querySelector("#eTopic").value.trim(), ch = box.querySelector("#eCh").value, n = +box.querySelector("#eN").value || 15; if (!topic) return flash("주제를 적어 주세요");
+      sync(); const topic = e.topic.trim(); if (!topic) return flash("주제를 적어 주세요");
+      const had = sentClips().length; if (had && !confirm(`지금 대본(${had}문장)을 새 대본으로 바꿀까요?\n(목소리·장면도 처음부터 다시 만들어요. ↶ 되돌리기 가능)`)) return;
       EASY.running = true; renderEasy();
-      const r = await api("/api/direct", { sents: [], instruction: `주제: ${topic}\n이 주제로 쇼츠 대본을 약 ${n}문장 써 줘. 첫 문장은 궁금증을 일으키게, 마지막은 여운 있게.`, channel: ch, topic });
+      const ins = `주제: ${topic}\n이 주제로 쇼츠 대본을 써 줘. ` + (e.len ? `길이는 읽어서 약 ${e.len}초(초당 약 6.3음절). 문장 수는 정하지 않아요 — 내용과 호흡에 맞게 나눠요.` : "길이와 문장 수는 정하지 않아요 — 주제와 느낌에 가장 맞게 알아서(쇼츠라 3분은 넘지 않게).") + (e.feel.trim() ? `\n원하는 느낌·분위기(가장 우선, 채널 규칙의 말투보다 앞서요): ${e.feel.trim()}` : "\n첫 문장은 궁금증을 일으키게, 마지막은 여운 있게.") + (e.ch === "free" ? "\n장르 제한 없음. 이 주제와 느낌에 가장 잘 맞는 형식으로." : "") + "\n사실을 말할 때는 확실한 것만(지어내지 않기).";
+      const r = await api("/api/direct", { sents: [], instruction: ins, channel: e.ch === "free" ? "" : e.ch, topic });
       EASY.running = false;
       if (r.error || !r.sentences) { renderEasy(); const m = $("#eMsg"); if (m) m.textContent = r.error || "대본을 못 받았어요. 다시 눌러 주세요."; return; }
-      if (!P.folder) P.folder = (ch === "sobang" ? "소방_" : "지구_") + topic.replace(/\s+/g, "").slice(0, 20);
+      if (had) { snap(); P.clips = []; }
+      if (!P.folder || had) P.folder = P.folder || ((e.ch === "sobang" ? "소방_" : e.ch === "free" ? "자유_" : "지구_") + topic.replace(/\s+/g, "").slice(0, 20));
       if (!P.name || P.name === "새 프로젝트") { P.name = topic.slice(0, 30); $("#projName").value = P.name; }
-      P.check = r.check || []; await addSents(r.sentences.map((x) => x.text), false, true); setStage("script");
+      P.check = r.check || []; P.feel = e.feel; P.channel = e.ch; EASY.again = false; DIR.pos = "";
+      await addSents(r.sentences.map((x) => x.text), false, true); if (had) undoS.pop();   // ↶ 한 번에 예전 대본으로
+      setStage("script");
     }; return; }
   box.querySelectorAll(".ecard").forEach((row) => {
     const c = clipById(row.dataset.id); if (!c) return; const q = (k) => row.querySelector(`[data-e="${k}"]`);

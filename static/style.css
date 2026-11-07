@@ -164,3 +164,4 @@ button.big{font-size:15px;padding:11px 16px;border-radius:9px}button.pri{backgro
 .enote{font-size:12px;color:var(--dim);line-height:1.6;border:1px dashed var(--line);border-radius:8px;padding:8px 10px}
 header button{white-space:nowrap}#saveState{font-size:11px;white-space:nowrap}
 #keyState{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}.logo{white-space:nowrap}
+.ehero textarea{display:block;width:100%;margin-top:4px;font:inherit;font-size:14px;line-height:1.5;background:#1d222b;color:#fff;border:1px solid var(--line);border-radius:7px;padding:8px;resize:vertical}.ehero .row button.big{width:auto;margin-top:8px}.ehero #eNfClose{flex:0 0 auto}.ehero .chip{font-size:12px;padding:3px 9px;border-radius:14px}
