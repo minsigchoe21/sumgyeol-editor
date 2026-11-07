@@ -449,6 +449,7 @@ async function relink() {   // 다른 PC에서 저장한 프로젝트면 src로 
 function afterLoad() {
   $("#projName").value = P.name; $("#aspect").value = `${P.w}x${P.h}`; cv.width = P.w; cv.height = P.h;
   if (sel && !clipById(sel)) sel = null; renderTL(); renderInsp(); seek(Math.min(t, projDur()));
+  try { if (!EASY.running) { EASY.log = []; EASY.open = {}; } renderEasy(); } catch (e) {}
 }
 $("#aspect").onchange = (e) => { snap(); const [w, h] = e.target.value.split("x").map(Number); P.w = w; P.h = h; afterLoad(); };
 $("#projName").onchange = dirty;
@@ -697,6 +698,7 @@ function projFolder() {
 }
 function vAt(tt) { return P.clips.filter((c) => c.track === "V1" && tt >= c.start && tt < c.start + c.dur).sort((a, b) => b.start - a.start)[0]; }
 function renderSents() {
+  try { if (document.body.classList.contains("easy")) renderEasy(); } catch (e) {}
   const box = $("#sentList"); if (!box) return; const ss = sentClips();
   ss.forEach((c) => { if (speakOff(c)) { c.speak = ""; if (c.voice) c.voiceStale = true; } });   // 옛 글의 읽는 법이 남은 문장: 지우고 목소리 다시 만들기 표시
   if (!ss.length) { box.innerHTML = dirHtml() + '<p class="dim">아직 문장이 없어요. 위 📝 대본 지시하기에 "해달 편, 핵심종 이야기로 15문장 써 줘"처럼 적거나, 대본 추천·자막(.srt) 불러오기로 넣어 주세요.</p>'; bindDir(); return; }
@@ -711,7 +713,7 @@ function renderSents() {
     <div class="btns"><button data-act="prf" title="이 문장 첨삭: 문제점 + 고친 안 2~3개">✍ 첨삭</button><button data-act="cut" class="on" title="원본을 돌려 보며 I·O를 찍어 이 문장 자리에 넣기">✂ 구간 뜨기</button><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}<button data-act="ask" class="${c.veoAsk ? "on" : ""}" title="이 문장 Veo를 Claude에게 맡겨요(저장 후 채팅에 'Veo 맡겼어')">🤖 ${c.veoAsk ? "Claude에게 맡김 ✓" : "Claude에게 맡기기"}</button></div>
     <div class="res">${c.veo ? veoHtml(c.veo) : ""}</div></div>`; }).join("");
   bindDir();
-  $("#btnArrange").onclick = arrangeAll;
+  $("#btnArrange").onclick = () => arrangeAll();
   $("#btnPrfAll").onclick = () => prfRun(sentClips().map((x) => x.id), "");
   $("#btnVoiceAll").onclick = async () => { const all = sentClips(); for (let k = 0; k < all.length; k++) { $("#voiceState").textContent = `목소리 만드는 중 ${k + 1}/${all.length}…`; const ok = await sentVoice(all[k], true); if (!ok) break; } $("#voiceState").textContent = "다 만들었어요 ✓"; renderSents(); };
   box.querySelectorAll(".srow").forEach((row) => {
@@ -741,7 +743,7 @@ function renderSents() {
 async function sentVoice(c, quiet) {
   const poll = setInterval(async () => { const st = await api("/api/tts/status", {}); if (st.state && !st.ready) ($("#voiceState") || {}).textContent = st.state; }, 1500);
   const r = await api("/api/tts", { text: c.text, speak: c.speak || "", folder: projFolder() }); clearInterval(poll);
-  if (r.error) { if (!quiet) alert(r.error); else $("#voiceState").textContent = r.error; return false; }
+  if (r.error) { if (!quiet) alert(r.error); else { const e = $("#voiceState"); if (e) e.textContent = r.error; EASY.voiceErr = r.error; } return false; }
   c.speak = r.speak; delete c.voiceStale; await waitAllReady(); placeVoice(c, r.id, r.dur); return true;
 }
 function placeVoice(c, mid, dur) {
@@ -754,15 +756,15 @@ function placeVoice(c, mid, dur) {
   renderTL(); draw(); dirty();
 }
 // 🎬 대본에 맞춰 영상 재배치(11-07 "해달편 대본에 맞춰서 영상 재배치"): 이 편 폴더의 영상·사진 + 지금 타임라인의 클립을 Claude가 보고 문장마다 다시 붙여요
-async function arrangeAll() {
-  const ss = sentClips(); if (!ss.length) return; const st = $("#voiceState");
+async function arrangeAll(say) {
+  const ss = sentClips(); if (!ss.length) return false; say = say || ((m) => { const e = $("#voiceState"); if (e) e.textContent = m; }); const st = { set textContent(v) { say(v); } };
   const f = "sources/" + projFolder() + "/";
   const ids = [...new Set([...Object.values(MEDIA).filter((m) => (m.kind === "video" || m.kind === "image") && (m.rel || "").startsWith(f) && !(m.rel || "").includes("/voice/")).map((m) => m.id),
                           ...P.clips.filter((c) => c.track === "V1" && MEDIA[c.media]).map((c) => c.media)])];
-  if (!ids.length) { alert("이 편 폴더에 영상이 없어요"); return; }
+  if (!ids.length) { say("이 편 폴더에 영상이 없어요"); return false; }
   st.textContent = `Claude가 영상 ${ids.length}개를 보고 문장 ${ss.length}개에 맞추는 중(1~2분)…`;
   const r = await api("/api/arrange", { topic: $("#topic").value || P.name, ids, sentences: ss.map((c, i) => ({ i: i + 1, text: c.text, dur: c.dur })) });
-  if (r.error || !r.plan) { st.textContent = r.error || "재배치를 못 했어요"; return; }
+  if (r.error || !r.plan) { st.textContent = r.error || "재배치를 못 했어요"; return false; }
   snap(); let n = 0;
   for (const x of r.plan) {
     const c = ss[(x.i || 0) - 1], m = MEDIA[x.media]; if (!c || !m) continue;
@@ -772,17 +774,17 @@ async function arrangeAll() {
   }
   undoS.splice(undoS.length - n, n);   // 한 번의 되돌리기(Ctrl+Z)로 재배치 전체를 돌려요
   renderTL(); draw(); dirty(); renderSents();
-  $("#voiceState").textContent = `문장 ${n}개에 영상을 다시 붙였어요 ✓ (Ctrl+Z로 되돌리기)` + (r.notes ? " · " + r.notes : "");
+  say(`문장 ${n}개에 영상을 다시 붙였어요 ✓ (Ctrl+Z로 되돌리기)` + (r.notes ? " · " + r.notes : "")); return n > 0;
 }
 // 🤖 클립 코멘트로 고치기: 대본(글자·목소리)은 그대로, 이 클립 구간의 화면만 바꿔요
-async function clipFix(c) {
-  const out = $("#fixOut"); const memo = ($("#fixMemo").value || "").trim(); if (!memo) { out.textContent = "코멘트를 먼저 적어 주세요"; return; }
+async function clipFix(c, memoArg, outEl) {
+  const out = outEl || $("#fixOut"); const memo = (memoArg ?? ($("#fixMemo")?.value || "")).trim(); if (!memo) { out.textContent = "코멘트를 먼저 적어 주세요"; return; }
   c.memo = memo; out.textContent = "🤖 장면을 보고 고치는 중(20~40초)…";
   const sent = P.clips.filter((x) => x.kind === "text" && x.start <= c.start + 0.05 && x.start + x.dur > c.start + 0.05)[0] || sentClips().find((x) => x.start + x.dur > c.start);
   const f = "sources/" + projFolder() + "/";
   const cand = Object.values(MEDIA).filter((m) => (m.kind === "video" || m.kind === "image") && (m.rel || "").startsWith(f) && !(m.rel || "").includes("/voice/")).map((m) => m.id);
   const r = await api("/api/clip_fix", { id: c.media, text: sent?.text || "", comment: memo, cand, dur: c.dur, in: c.in || 0 });
-  if (r.error) { out.textContent = r.error; return; }
+  if (r.error) { out.textContent = r.error; return r; }
   c.fixReply = r.reply_ko || ""; const st = c.start, d = c.dur;
   if (r.action === "replace" && MEDIA[r.media]) {
     const m = MEDIA[r.media], isImg = m.kind === "image", cin = isImg ? 0 : Math.max(0, Math.min(+r.clip_in || 0, Math.max(0, m.dur - Math.min(d, m.dur))));
@@ -795,12 +797,12 @@ async function clipFix(c) {
     if (r.zoomEnd != null) { c.xEnd = c.xEnd ?? c.x; c.yEnd = c.yEnd ?? c.y; }
     renderTL(); renderInsp(); draw(); dirty();
   } else if (r.action === "search") {
-    renderInsp(); $("#fixOut").textContent = "🤖 " + c.fixReply + " → 새 영상 후보를 찾는 중…";
+    renderInsp(); out.textContent = "🤖 " + c.fixReply + " → 새 영상 후보를 찾는 중(자세히 편집의 영상 찾기 탭)…";
     document.querySelector('[data-tab="find"]').click(); $("#q").value = r.search_query || sent?.text || ""; $("#btnFind").click(); return;
   } else if (r.action === "veo") {
     if (sent) { sent.memo = (sent.memo ? sent.memo + " / " : "") + memo; document.querySelector('[data-tab="sent"]').click(); const row = document.querySelector(`.srow[data-id="${sent.id}"]`); if (row) await sentVeo(sent, row); }
   }
-  dirty(); const o2 = $("#fixOut"); if (o2) o2.textContent = "🤖 " + c.fixReply;
+  dirty(); const o2 = outEl || $("#fixOut"); if (o2) o2.textContent = "🤖 " + c.fixReply; return r;
 }
 function veoHtml(v) {
   const esc = (x) => String(x ?? "").replace(/</g, "&lt;");
@@ -1213,16 +1215,16 @@ async function sugRun() {
   DIR.sug = await api("/api/suggest", { sents: ss.map((c) => ({ id: c.id, text: c.text || "" })), after: pv, direction: dir, channel: /^소방/.test(projFolder()) ? "sobang" : "jigu", topic: projFolder() });
   DIR.busy = false; renderSents();
 }
-async function addSents(lines, keepDir) {
+async function addSents(lines, keepDir, noVoice) {
   lines = lines.map((x) => x.trim()).filter(Boolean); if (!lines.length) return flash("넣을 문장을 먼저 적어 주세요");
-  const ss = sentClips(), pv = $("#addPos")?.value ?? "", tpl = ss[0] || { size: 64, color: "#ffffff", y: 0.68, stroke: 8 };
+  const ss = sentClips(), pv = DIR.pos ?? $("#addPos")?.value ?? "", tpl = ss[0] || { size: 64, color: "#ffffff", y: 0.68, stroke: 8 };
   let at = pv === "^" || !ss.length ? 0 : (() => { const c = clipById(pv) || ss[ss.length - 1]; return c.start + c.dur; })();
   snap(); const made = [];
   for (const tx of lines) { const d = +(estDur(tx) + 0.45).toFixed(2); insertGap(at, d);
     const c = { id: uid(), track: "T1", kind: "text", start: at, in: 0, dur: d, text: tx, size: tpl.size, color: tpl.color, y: tpl.y, stroke: tpl.stroke }; P.clips.push(c); made.push(c); at += d; }
   sentClips().forEach((c, k) => (c.n = k + 1));
   if (!keepDir) DIR.add = ""; DIR.pos = made[made.length - 1].id; renderTL(); draw(); dirty(); renderSents();
-  if ($("#addVoice") ? $("#addVoice").checked : DIR.voice !== false) {
+  if (!noVoice && ($("#addVoice") ? $("#addVoice").checked : DIR.voice !== false)) {
     for (let k = 0; k < made.length; k++) { DIR.busy = `🔊 목소리 만드는 중 ${k + 1}/${made.length}…`; renderSents(); const ok = await sentVoice(made[k], true); if (!ok) break; }
     DIR.busy = false; renderSents();
   }
@@ -1264,3 +1266,191 @@ function speakOff(c) {   // 읽는 법이 지금 글과 많이 다르면(예전 
   const a = bag(c.text), b = bag(c.speak); let same = 0, tot = 0; for (const k in a) { tot += a[k]; same += Math.min(a[k], b[k] || 0); }
   return tot > 0 && same / tot < 0.5;
 }
+
+// ============================================================ 쉬운 화면(8-72) ====
+// 11-07 "편집이 너무 어렵다… 초보자도 직관적으로", "너가 대본 주면 → 내가 대본 수정 보고 → 너가 영상 만들고 → 내가 영상 컨펌하고 올리는 것"
+// ① 대본 확인 → ② 영상 만들기(편집기가 자동: 목소리·영상 모으기·장면 배치·마무리) → ③ 영상 확인(문장별 좋아요/고쳐 줘) → ④ 올리기
+const EASY = { log: [], running: false, open: {}, stopAt: null };
+const STEPS = [["script", "① 대본 확인"], ["build", "② 영상 만들기"], ["review", "③ 영상 확인"], ["upload", "④ 올리기"]];
+const stage = () => P.stage || (sentClips().length ? (P.clips.some((c) => c.track === "V1") ? "review" : "script") : "script");
+function setStage(s) { P.stage = s; dirty(); renderEasy(); }
+function easyOn(on) {
+  document.body.classList.toggle("easy", on); try { localStorage.setItem("easyMode", on ? "1" : "0"); } catch (e) {}
+  $("#btnMode").textContent = on ? "🛠 자세히 편집" : "✨ 쉬운 화면"; if (on) renderEasy(); else { renderTL(); renderSents(); }
+  setTimeout(() => { draw(); }, 50);
+}
+function sceneOf(c) { return P.clips.filter((x) => x.track === "V1" && x.start < c.start + c.dur - 0.05 && x.start + x.dur > c.start + 0.05).sort((a, b) => a.start - b.start); }
+function thumbOf(c) { const v = sceneOf(c)[0]; return v && MEDIA[v.media] ? `/media/${v.media}/thumb.jpg` : ""; }
+function easyTodo() {   // 남은 할 일
+  const ss = sentClips(), out = [];
+  ss.forEach((c, k) => {
+    const n = c.n || k + 1;
+    if (!c.voice || !MEDIA[c.voice] || c.voiceStale) out.push({ id: c.id, step: "build", t: `${n}번 목소리 ${c.voiceStale ? "다시 만들기" : "없음"}` });
+    if (!sceneOf(c).length) out.push({ id: c.id, step: "review", t: `${n}번 장면 없음` });
+    else if (c.ok !== true) out.push({ id: c.id, step: "review", t: `${n}번 영상 확인 안 함`, soft: true });
+    if (c.veoAsk) out.push({ id: c.id, step: "review", t: `${n}번 Veo 만들기를 Claude에게 맡김(채팅에 "Veo 맡겼어")`, soft: true });
+  });
+  return out;
+}
+function renderEasy() {
+  const box = $("#easy"); if (!box || !document.body.classList.contains("easy")) return;
+  if (box.contains(document.activeElement) && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) { clearTimeout(EASY._t); EASY._t = setTimeout(renderEasy, 600); return; }   // 글 치는 중이면 나중에
+  const st = stage(), ss = sentClips(), sc = box.querySelector(".ebody")?.scrollTop || 0;
+  let h = `<div class="esteps">${STEPS.map(([k, l], i) => `<button data-st="${k}" class="${k === st ? "on" : ""}${STEPS.findIndex((x) => x[0] === st) > i ? " done" : ""}">${l}</button>`).join("")}</div><div class="ebody">`;
+  if (st === "script") h += easyScript(ss); else if (st === "build") h += easyBuild(); else if (st === "review") h += easyReview(ss); else h += easyUpload(ss);
+  box.innerHTML = h + "</div>";
+  box.querySelector(".ebody").scrollTop = sc;
+  box.querySelectorAll("[data-st]").forEach((b) => (b.onclick = () => { if (EASY.running && b.dataset.st !== "build") return flash("영상을 만드는 중이에요. 끝나면 넘어가요"); setStage(b.dataset.st); }));
+  if (st === "script") bindScript(box); else if (st === "build") bindBuild(box); else if (st === "review") bindReview(box); else bindUpload(box);
+}
+// ---- ① 대본 확인
+function easyScript(ss) {
+  if (!ss.length) return `<div class="ehero"><h2>새 영상 시작</h2><p class="dim">주제만 적으면 Claude가 대본을 써요. (Claude가 채팅에서 만든 초안은 위 <b>열기</b> → "Claude가 만든 초안")</p>
+    <label>채널 <select id="eCh"><option value="jigu">지구의숨결</option><option value="sobang">소방해부학</option></select></label>
+    <label>주제 <input id="eTopic" placeholder="예: 해달이 켈프 숲을 지키는 이유" value="${esc(EASY.topic || "")}"></label>
+    <label>문장 수 <input id="eN" type="number" value="15" min="6" max="30"></label>
+    <button id="eWrite" class="big pri"${EASY.running ? " disabled" : ""}>${EASY.running ? "📝 대본 쓰는 중(20~60초)…" : "📝 Claude에게 대본 받기"}</button><div id="eMsg" class="dim"></div></div>`;
+  return `<div class="ehead"><b>대본을 읽고 고쳐 주세요</b><span class="dim"> · 글을 바로 고치거나, 방향을 적고 ✨ 추천 · ${ss.length}문장 · 약 ${ss.reduce((a, c) => a + estDur(c.text), 0).toFixed(0)}초</span></div>
+    ${ss.map((c, k) => `${k === 0 ? `<button class="eadd" data-add="^">＋ 여기에 문장 넣기</button>` : ""}<div class="ecard" data-id="${c.id}"><div class="eno">${c.n || k + 1}</div><div class="emain">
+      <textarea data-e="text" rows="2">${esc(c.text)}</textarea>
+      <div class="erow"><input data-e="dir" placeholder="원하는 방향(예: 질문으로 시작, 더 짧게)" value="${esc(c.dirAsk || "")}"><button data-e="sug">✨ 추천</button><button data-e="prf" title="맞춤법·흐름 다듬기">✍ 첨삭</button><button data-e="del" title="이 문장 지우기">🗑</button></div>
+      <input data-e="memo" class="ememo" placeholder="장면 요청(선택): 예) 해달 얼굴 클로즈업 / Veo로" value="${esc(c.memo || "")}">
+      <div class="prf">${prfHtml(c)}</div></div></div>
+      <button class="eadd" data-add="${c.id}">＋ 여기에 문장 넣기</button>`).join("")}
+    <div class="efoot"><button id="eConfirm" class="big pri">✅ 대본 확정하고 영상 만들기 →</button><div class="dim" style="font-size:12px">확정하면 편집기가 목소리·영상 모으기·장면 배치까지 자동으로 해요(5~10분).</div></div>`;
+}
+function bindScript(box) {
+  const w = box.querySelector("#eWrite");
+  if (w) { box.querySelector("#eTopic").oninput = (e) => (EASY.topic = e.target.value);
+    w.onclick = async () => {
+      const topic = box.querySelector("#eTopic").value.trim(), ch = box.querySelector("#eCh").value, n = +box.querySelector("#eN").value || 15; if (!topic) return flash("주제를 적어 주세요");
+      EASY.running = true; renderEasy();
+      const r = await api("/api/direct", { sents: [], instruction: `주제: ${topic}\n이 주제로 쇼츠 대본을 약 ${n}문장 써 줘. 첫 문장은 궁금증을 일으키게, 마지막은 여운 있게.`, channel: ch, topic });
+      EASY.running = false;
+      if (r.error || !r.sentences) { renderEasy(); const m = $("#eMsg"); if (m) m.textContent = r.error || "대본을 못 받았어요. 다시 눌러 주세요."; return; }
+      if (!P.folder) P.folder = (ch === "sobang" ? "소방_" : "지구_") + topic.replace(/\s+/g, "").slice(0, 20);
+      if (!P.name || P.name === "새 프로젝트") { P.name = topic.slice(0, 30); $("#projName").value = P.name; }
+      P.check = r.check || []; await addSents(r.sentences.map((x) => x.text), false, true); setStage("script");
+    }; return; }
+  box.querySelectorAll(".ecard").forEach((row) => {
+    const c = clipById(row.dataset.id); if (!c) return; const q = (k) => row.querySelector(`[data-e="${k}"]`);
+    q("text").oninput = (e) => { c.text = e.target.value; if (c.speak && !c.speakManual) c.speak = ""; if (c.voice) c.voiceStale = true; c.ok = false; draw(); dirty(); };
+    q("dir").oninput = (e) => { c.dirAsk = e.target.value; dirty(); };
+    q("memo").oninput = (e) => { c.memo = e.target.value; dirty(); };
+    q("sug").onclick = () => { if (!(c.dirAsk || "").trim()) { q("dir").focus(); return flash("원하는 방향을 먼저 적어 주세요"); } prfRun([c.id], "dir", c.dirAsk.trim()); };
+    q("prf").onclick = () => prfRun([c.id], "");
+    q("del").onclick = () => { if (!confirm(`${c.n}번 문장을 지울까요? (↶ 되돌리기 가능)`)) return; snap(); rippleRange(c.start, c.start + c.dur); sentClips().forEach((x, k) => (x.n = k + 1)); renderTL(); draw(); dirty(); renderEasy(); };
+    bindPrf(row, c);
+  });
+  box.querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => {
+    const tx = prompt("넣을 문장을 적어 주세요(내용만 적고 넣은 뒤 ✨ 추천으로 다듬어도 돼요)"); if (!tx || !tx.trim()) return;
+    DIR.pos = b.dataset.add; addSents([tx.trim()], false, true);
+  }));
+  const cf = box.querySelector("#eConfirm"); if (cf) cf.onclick = () => { if (!confirm("대본을 확정하고 영상을 만들까요?\n(목소리·영상 모으기·장면 배치를 자동으로 해요. 나중에 대본을 다시 고쳐도 돼요)")) return; setStage("build"); easyBuildRun(); };
+}
+// ---- ② 영상 만들기(자동)
+function easyBuild() {
+  const L = EASY.log;
+  return `<div class="ehead"><b>${EASY.running ? "영상을 만들고 있어요" : L.length ? "영상 만들기가 끝났어요" : "영상 만들기"}</b><span class="dim"> · 이 창을 그대로 두세요</span></div>
+    <div class="elog">${L.map((x) => `<div class="${x.st}">${x.st === "run" ? "⏳" : x.st === "ok" ? "✅" : x.st === "warn" ? "⚠️" : "❌"} ${esc(x.t)}${x.sub ? `<div class="dim">${esc(x.sub)}</div>` : ""}</div>`).join("") || '<p class="dim">아래 버튼을 누르면 시작해요.</p>'}</div>
+    <div class="efoot">${EASY.running ? "" : `<button id="eRun" class="big${L.length ? "" : " pri"}">${L.length ? "↻ 다시 만들기" : "▶ 영상 만들기 시작"}</button>${L.length ? `<button id="eNext" class="big pri">③ 영상 확인하러 가기 →</button>` : ""}`}</div>`;
+}
+function bindBuild(box) { const r = box.querySelector("#eRun"); if (r) r.onclick = easyBuildRun; const n = box.querySelector("#eNext"); if (n) n.onclick = () => setStage("review"); }
+async function easyBuildRun() {
+  if (EASY.running) return; EASY.running = true; EASY.log = []; const L = EASY.log;
+  const step = (t) => { const x = { t, st: "run" }; L.push(x); renderEasy(); return { sub: (s) => { x.sub = s; renderEasy(); }, done: (st = "ok", s) => { x.st = st; if (s != null) x.sub = s; renderEasy(); } }; };
+  try {
+    const ss = sentClips(); if (!ss.length) { step("대본이 없어요").done("err"); return; }
+    if (!P.folder) P.folder = projFolder();
+    // 1) 목소리
+    const need = ss.filter((c) => !c.voice || !MEDIA[c.voice] || c.voiceStale), s1 = step(`목소리 만들기 (${need.length}문장)`);
+    let vok = 0; for (const c of need) { s1.sub(`${c.n}번: ${c.text.slice(0, 24)}…`); if (await sentVoice(c, true)) vok++; else break; }
+    s1.done(vok === need.length ? "ok" : "err", vok === need.length ? `${need.length}문장 · 문장 길이를 목소리에 맞췄어요` : "목소리를 못 만들었어요: " + (EASY.voiceErr || "") );
+    // 2) 영상 모으기(이 편 폴더에 영상이 적으면)
+    const f = "sources/" + projFolder() + "/", have = () => Object.values(MEDIA).filter((m) => (m.kind === "video" || m.kind === "image") && (m.rel || "").startsWith(f) && !(m.rel || "").includes("/voice/")).length;
+    const goal = Math.max(8, Math.ceil(ss.length * 0.8));
+    if (have() < goal) {
+      const s2 = step(`저작권 걱정 없는 영상 모으기 (지금 ${have()}개 → ${goal}개 목표)`);
+      const topic = (P.name || projFolder()) + " — " + ss.slice(0, 3).map((c) => c.text).join(" ");
+      const ch = /^소방/.test(projFolder()) ? "sobang" : "jigu";
+      const r0 = await api("/api/collect", { channel: ch, topic, n: goal - have() + 4, orient: P.h > P.w ? "portrait" : "", folder: projFolder(), level: "attrib", review: false });
+      for (let k = 0; k < 400; k++) { const st = await api("/api/collect/status", { folder: r0.folder || projFolder() }); s2.sub(st.state || "모으는 중…"); if (st.done) break; await new Promise((r) => setTimeout(r, 2000)); }
+      await loadMedia(); s2.sub("편집용 사본 만드는 중…"); await waitAllReady();
+      s2.done(have() ? "ok" : "err", `이 편 영상 ${have()}개` + (have() ? "" : " — Pixabay 키가 없거나 검색 결과가 없어요(🔑 키 설정)"));
+    } else step(`이 편 영상 ${have()}개가 이미 있어요`).done();
+    // 3) 장면 배치
+    const s3 = step("문장마다 어울리는 장면 고르기(Claude가 영상을 보고 골라요, 1~2분)");
+    const ok3 = await arrangeAll((m) => s3.sub(m)); s3.done(ok3 ? "ok" : "err");
+    // 4) 마무리
+    const s4 = step("마무리: 빈틈 메우기 · 처음/끝 서서히 · Veo 요청 정리");
+    P.clips.filter((x) => x.track === "V1").forEach((c) => fixOverrun(c));
+    const v = P.clips.filter((x) => x.track === "V1").sort((a, b) => a.start - b.start);
+    if (v[0]) v[0].fadeIn = Math.max(v[0].fadeIn || 0, 0.4); if (v.length) v[v.length - 1].fadeOut = Math.max(v[v.length - 1].fadeOut || 0, 0.8);
+    let nv = 0; sentClips().forEach((c) => { c.ok = false; if (/veo/i.test(c.memo || "") && !c.veoAsk) { c.veoAsk = true; nv++; } });
+    renderTL(); draw(); await save();
+    s4.done("ok", nv ? `Veo가 필요한 문장 ${nv}개는 Claude에게 맡겼어요 → 채팅에 "Veo 맡겼어"` : "다 됐어요");
+  } catch (e) { step("오류: " + e.message).done("err"); }
+  finally { EASY.running = false; renderEasy(); if (!EASY.log.some((x) => x.st === "err")) setTimeout(() => { if (stage() === "build") setStage("review"); }, 1500); }
+}
+// ---- ③ 영상 확인
+function easyReview(ss) {
+  const nOk = ss.filter((c) => c.ok === true).length;
+  return `<div class="ehead"><b>문장마다 영상을 보고 확인해 주세요</b><span class="dim"> · 👍 ${nOk}/${ss.length}</span><span class="grow"></span><button id="ePlayAll">▶ 처음부터 보기</button></div>
+    ${ss.map((c, k) => { const th = thumbOf(c), sc = sceneOf(c), ai = sc.some((x) => x.ai);
+      return `<div class="ecard rv${c.ok === true ? " good" : ""}" data-id="${c.id}"><div class="ethumb" data-e="play" style="${th ? `background-image:url(${th})` : ""}">${th ? "▶" : "장면<br>없음"}${ai ? '<span class="ai">AI</span>' : ""}</div><div class="emain">
+        <div class="etext"><b>${c.n || k + 1}</b> ${esc(c.text)} <span class="dim">· ${c.dur.toFixed(1)}초</span></div>
+        <div class="erow"><button data-e="ok" class="${c.ok === true ? "on" : ""}">👍 좋아요</button><button data-e="fix" class="${EASY.open[c.id] ? "on" : ""}">✏️ 고쳐 줘</button>${c.veoAsk ? '<span class="dim" style="font-size:11px">✨ Veo 맡김</span>' : ""}</div>
+        ${!EASY.open[c.id] && c.fixMsg ? `<div class="dim" style="font-size:12px;margin-top:4px">${esc(c.fixMsg)}</div>` : ""}
+        ${EASY.open[c.id] ? `<div class="efix"><textarea data-e="cm" rows="2" placeholder="어떻게 바꿀까요? 예) 해달 얼굴이 잘 보이게 / 더 밝은 장면 / 성게가 나오는 걸로 / 너무 빨라 / Veo로 만들어">${esc(c.reviewMemo || "")}</textarea><button data-e="go" class="pri">🤖 이대로 고쳐 줘</button><div class="dim" data-e="out" style="font-size:12px">${esc(c.fixMsg || "")}</div></div>` : ""}
+      </div></div>`; }).join("")}
+    <div class="efoot"><button id="eDone" class="big pri">✅ 영상 확정 → ④ 올리기</button><button id="eBack" class="big">← 대본 다시 고치기</button></div>`;
+}
+function playRange(a, b) { seek(a); EASY.stopAt = b; togglePlay(true); }
+setInterval(() => { if (EASY.stopAt != null && (!playing || t >= EASY.stopAt)) { if (playing) togglePlay(false); EASY.stopAt = null; } }, 60);
+function bindReview(box) {
+  box.querySelector("#ePlayAll").onclick = () => { EASY.stopAt = null; seek(0); togglePlay(true); };
+  box.querySelector("#eDone").onclick = () => { const left = sentClips().filter((c) => c.ok !== true).length; if (left && !confirm(`아직 👍 안 누른 문장이 ${left}개 있어요. 그래도 확정할까요?`)) return; setStage("upload"); };
+  box.querySelector("#eBack").onclick = () => setStage("script");
+  box.querySelectorAll(".ecard").forEach((row) => {
+    const c = clipById(row.dataset.id); if (!c) return; const q = (k) => row.querySelector(`[data-e="${k}"]`);
+    q("play").onclick = () => { sel = sceneOf(c)[0]?.id || null; playRange(c.start, c.start + c.dur); };
+    q("ok").onclick = () => { c.ok = c.ok === true ? false : true; EASY.open[c.id] = false; dirty(); renderEasy(); };
+    q("fix").onclick = () => { EASY.open[c.id] = !EASY.open[c.id]; renderEasy(); setTimeout(() => document.querySelector(`.ecard[data-id="${c.id}"] [data-e="cm"]`)?.focus(), 30); };
+    const cm = q("cm"); if (cm) cm.oninput = (e) => { c.reviewMemo = e.target.value; dirty(); };
+    const go = q("go"); if (go) go.onclick = async () => {
+      const memo = (c.reviewMemo || "").trim(); if (!memo) return flash("어떻게 바꿀지 적어 주세요");
+      const out = q("out"); go.disabled = true; out.textContent = "🤖 고치는 중(20~40초)…";
+      const v = sceneOf(c);
+      if (/veo/i.test(memo)) { c.memo = (c.memo ? c.memo + " / " : "") + memo; c.veoAsk = true; c.fixMsg = "✨ Veo로 만들도록 Claude에게 맡겼어요 → 채팅에 \"Veo 맡겼어\""; await save(); renderEasy(); return; }
+      if (!v.length) { c.fixMsg = "이 문장에 장면이 없어요. ② 영상 만들기를 다시 하거나, 🛠 자세히 편집의 ✂ 구간 뜨기로 넣어 주세요."; renderEasy(); return; }
+      const before = JSON.stringify(P); const r = await clipFix(v[0], memo, out);
+      c.fixMsg = r?.error ? r.error : "🤖 " + (v[0].fixReply || "고쳤어요") + " — 다시 보고 👍 눌러 주세요"; c.ok = false; EASY.open[c.id] = !!r?.error;
+      if (JSON.stringify(P) !== before) { undoS.push(before); redoS.length = 0; }
+      dirty(); renderEasy(); if (!r?.error) playRange(c.start, c.start + c.dur);
+    };
+  });
+}
+// ---- ④ 올리기
+function easyUpload(ss) {
+  const todo = easyTodo(), hard = todo.filter((x) => !x.soft);
+  return `<div class="ehead"><b>올리기 전에 확인해요</b></div>
+    <div class="etodo">${todo.length ? todo.map((x) => `<button data-go="${x.id}" data-s="${x.step}" class="${x.soft ? "soft" : ""}">${x.soft ? "•" : "⚠️"} ${esc(x.t)}</button>`).join("") : '<div class="good">✅ 남은 할 일이 없어요</div>'}</div>
+    <div class="efoot" style="flex-direction:column;align-items:stretch">
+      <button id="ePrev" class="big${hard.length ? "" : " pri"}">🎬 미리보기 영상 만들기(mp4)</button>
+      <button id="eCred" class="big">📋 업로드 설명란 출처 문구</button>
+      <div class="enote">최종 영상(고화질·음량 맞춤·커버)과 유튜브·인스타 자동 올리기는 다음 차례에 붙여요. 지금은 채팅에 <b>"${esc(P.name)} 확정했어"</b>라고 하면 Claude가 이 프로젝트로 최종본을 만들고 저장해요.${ss.some((c) => sceneOf(c).some((x) => x.ai)) ? "<br>⚠ AI(Veo) 장면이 있어요 → 유튜브 \"합성 콘텐츠: 예\"" : ""}</div>
+      <button id="eBack2" class="big">← 영상 다시 확인</button></div>`;
+}
+function bindUpload(box) {
+  box.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => { setStage(b.dataset.s === "build" ? "build" : "review"); setTimeout(() => { const el = document.querySelector(`.ecard[data-id="${b.dataset.go}"]`); if (el) { el.scrollIntoView({ block: "center" }); el.classList.add("flashc"); } }, 60); }));
+  box.querySelector("#ePrev").onclick = exportPreview;
+  box.querySelector("#eCred").onclick = async () => { const r = await api("/api/credits_text", { folder: projFolder() }); modal(`<h3>출처 문구</h3><p class="dim" style="font-size:12px">업로드 설명란에 붙여 넣으세요.</p><textarea style="width:100%;min-height:220px;background:#262b34;color:var(--fg);border:1px solid var(--line);border-radius:6px">${esc(r.text || "")}</textarea>`); };
+  box.querySelector("#eBack2").onclick = () => setStage("review");
+}
+// 켜기
+(function initEasy() {
+  const sec = document.createElement("section"); sec.id = "easy"; $("main").insertBefore(sec, $("#center"));
+  const b = document.createElement("button"); b.id = "btnMode"; $("#btnSave").after(b); b.onclick = () => easyOn(!document.body.classList.contains("easy"));
+  let on = true; try { on = localStorage.getItem("easyMode") !== "0"; } catch (e) {}
+  easyOn(on);
+})();
