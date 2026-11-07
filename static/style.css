@@ -99,3 +99,13 @@ footer#tl{position:absolute;left:0;right:0;bottom:0;height:250px;border-top:1px 
 #srcMon .mk{border-color:var(--acc)}#srcMon .pri{background:var(--acc);color:#111;font-weight:700;border-color:var(--acc)}
 #srcMon .smAct button{padding:7px 12px}
 .plist .row button{width:auto;flex:0 0 auto;margin:0}.plist .row button.grow{flex:1;min-width:0}.plist details .row span{font-size:13px}
+
+/* ✍ 첨삭 */
+.prfBox{margin-top:6px;border:1px solid #5b6b85;border-radius:6px;padding:6px;background:#161b24;font-size:12px}
+.prfHd{display:flex;align-items:center;gap:6px;font-weight:700;color:#9fc3ff}.prfHd button{padding:0 6px;font-size:11px}
+.prfBox .iss{color:#ffcc80;margin-top:2px}.prfBox .iss.fact{color:#ff8a65}
+.prfBox .opt{border-top:1px dashed var(--line);margin-top:5px;padding-top:5px}
+.prfBox .ot{font-size:13px;color:#fff;line-height:1.45}.prfBox .ot mark{background:#ffd54a55;color:#fff;border-radius:3px;padding:0 1px}
+.prfBox .ow{color:var(--dim);font-size:11px;margin-top:2px}
+.prfBox button{font-size:11px;padding:2px 7px}.prfBox input{font-size:11px;padding:3px 6px}
+.prfBox .ot del{color:#ff8a8a;opacity:.7}

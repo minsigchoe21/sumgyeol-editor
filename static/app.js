@@ -683,15 +683,17 @@ function vAt(tt) { return P.clips.filter((c) => c.track === "V1" && tt >= c.star
 function renderSents() {
   const box = $("#sentList"); if (!box) return; const ss = sentClips();
   if (!ss.length) { box.innerHTML = '<p class="dim">글자 트랙에 문장이 없어요. 대본 추천이나 자막(.srt) 불러오기로 넣어 주세요.</p>'; return; }
-  const head = `<div class="row" style="flex-wrap:wrap"><button id="btnArrange">🎬 대본에 맞춰 영상 재배치</button><button id="btnVoiceAll">🔊 모든 문장 목소리 다시 만들기</button></div><div id="voiceState" class="dim" style="font-size:12px"></div>`;
+  const head = `<div class="row" style="flex-wrap:wrap"><button id="btnArrange">🎬 대본에 맞춰 영상 재배치</button><button id="btnVoiceAll">🔊 모든 문장 목소리 다시 만들기</button><button id="btnPrfAll" title="Claude가 문장마다 문제점과 고친 안을 보여 줘요(적용은 직접)">✍ 모든 문장 첨삭</button></div><div id="voiceState" class="dim" style="font-size:12px"></div>`;
   box.innerHTML = head + ss.map((c, i) => { const v = vAt(c.start + Math.min(0.5, c.dur / 2)); const th = v && MEDIA[v.media] ? (MEDIA[v.media].kind === "image" ? `/media/${v.media}/thumb.jpg` : `/media/${v.media}/thumb.jpg`) : "";
     return `<div class="srow" data-id="${c.id}"><div class="hdr"><b>${c.n || i + 1}</b> ${fmt(c.start)} · ${c.dur.toFixed(1)}초 <button data-act="go" title="이 문장으로 가서 재생">▶</button>${v?.ai ? ' <span style="color:#ff8a65">AI</span>' : ""}${th ? `<img src="${th}" title="지금 화면: ${MEDIA[v.media].name}">` : '<img alt="">'}</div>
     <textarea data-act="text">${(c.text || "").replace(/</g, "&lt;")}</textarea>
-    <div class="row" style="margin:4px 0 0"><input class="memo" data-act="speak" style="margin:0" placeholder="읽는 법(비우면 자동: 숫자→한글)" value="${(c.speak || "").replace(/"/g, "&quot;")}"><button data-act="voice" style="font-size:12px;padding:3px 7px;white-space:nowrap">🔊 목소리${c.voice && MEDIA[c.voice] ? " ✓" : ""}</button></div>
+    <div class="row" style="margin:4px 0 0"><input class="memo" data-act="speak" style="margin:0" placeholder="읽는 법(비우면 자동: 숫자→한글)" value="${(c.speak || "").replace(/"/g, "&quot;")}"><button data-act="voice" class="${c.voiceStale ? "on" : ""}" style="font-size:12px;padding:3px 7px;white-space:nowrap" title="${c.voiceStale ? "글을 고쳐서 목소리를 다시 만들어야 해요" : ""}">🔊 ${c.voiceStale ? "목소리 다시 만들기" : "목소리" + (c.voice && MEDIA[c.voice] ? " ✓" : "")}</button></div>
     <input class="memo" data-act="memo" placeholder="코멘트·요청(예: 해달이 털 고르는 클로즈업, 바다 위에서)" value="${(c.memo || "").replace(/"/g, "&quot;")}">
-    <div class="btns"><button data-act="cut" class="on" title="원본을 돌려 보며 I·O를 찍어 이 문장 자리에 넣기">✂ 구간 뜨기</button><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}<button data-act="ask" class="${c.veoAsk ? "on" : ""}" title="이 문장 Veo를 Claude에게 맡겨요(저장 후 채팅에 'Veo 맡겼어')">🤖 ${c.veoAsk ? "Claude에게 맡김 ✓" : "Claude에게 맡기기"}</button></div>
+    <div class="prf">${prfHtml(c)}</div>
+    <div class="btns"><button data-act="prf" title="이 문장 첨삭: 문제점 + 고친 안 2~3개">✍ 첨삭</button><button data-act="cut" class="on" title="원본을 돌려 보며 I·O를 찍어 이 문장 자리에 넣기">✂ 구간 뜨기</button><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}<button data-act="ask" class="${c.veoAsk ? "on" : ""}" title="이 문장 Veo를 Claude에게 맡겨요(저장 후 채팅에 'Veo 맡겼어')">🤖 ${c.veoAsk ? "Claude에게 맡김 ✓" : "Claude에게 맡기기"}</button></div>
     <div class="res">${c.veo ? veoHtml(c.veo) : ""}</div></div>`; }).join("");
   $("#btnArrange").onclick = arrangeAll;
+  $("#btnPrfAll").onclick = () => prfRun(sentClips().map((x) => x.id), "");
   $("#btnVoiceAll").onclick = async () => { const all = sentClips(); for (let k = 0; k < all.length; k++) { $("#voiceState").textContent = `목소리 만드는 중 ${k + 1}/${all.length}…`; const ok = await sentVoice(all[k], true); if (!ok) break; } $("#voiceState").textContent = "다 만들었어요 ✓"; renderSents(); };
   box.querySelectorAll(".srow").forEach((row) => {
     const c = clipById(row.dataset.id);
@@ -700,6 +702,8 @@ function renderSents() {
     row.querySelector('[data-act="speak"]').oninput = (e) => { c.speak = e.target.value; dirty(); };
     row.querySelector('[data-act="voice"]').onclick = async (e) => { e.target.textContent = "🔊 만드는 중…"; await sentVoice(c); renderSents(); };
     row.querySelector('[data-act="go"]').onclick = () => { sel = c.id; seek(c.start); togglePlay(true); };
+    row.querySelector('[data-act="prf"]').onclick = () => prfRun([c.id], "");
+    bindPrf(row, c);
     row.querySelector('[data-act="cut"]').onclick = () => openSrcMon({ sid: c.id });
     row.querySelector('[data-act="vid"]').onclick = () => sentFind(c, row, "video");
     row.querySelector('[data-act="img"]').onclick = () => sentFind(c, row, "image");
@@ -714,7 +718,7 @@ async function sentVoice(c, quiet) {
   const poll = setInterval(async () => { const st = await api("/api/tts/status", {}); if (st.state && !st.ready) ($("#voiceState") || {}).textContent = st.state; }, 1500);
   const r = await api("/api/tts", { text: c.text, speak: c.speak || "", folder: projFolder() }); clearInterval(poll);
   if (r.error) { if (!quiet) alert(r.error); else $("#voiceState").textContent = r.error; return false; }
-  c.speak = r.speak; await waitAllReady(); placeVoice(c, r.id, r.dur); return true;
+  c.speak = r.speak; delete c.voiceStale; await waitAllReady(); placeVoice(c, r.id, r.dur); return true;
 }
 function placeVoice(c, mid, dur) {
   snap(); const pause = 0.45, slot = Math.max(1, dur + pause), oldEnd = c.start + c.dur, delta = slot - c.dur;
@@ -1056,3 +1060,61 @@ addEventListener("keydown", (e) => {
   else if (e.key === "Enter") smFill(); else if (e.key === ",") smAppend(); else if (e.key === ".") smOver();
   else if (e.key === "[" || e.key === "PageUp") smStep(-1); else if (e.key === "]" || e.key === "PageDown") smStep(1);
 }, true);
+
+// ------------------------------------------------------------ ✍ 문장별 첨삭 ----
+// 11-07 "대본 편집하면서 대본 첨삭", "문장별 첨삭": 대본 전체를 맥락으로 Claude가 문장마다 문제점 + 고친 안(이유)을 줘요. [적용]을 눌러야 바뀌고, 바뀐 문장은 목소리를 다시 만들라고 표시해요.
+const PRF_HOW = [["", "기본"], ["short", "더 짧게"], ["hook", "더 궁금하게"], ["easy", "더 쉽게"], ["voice", "읽기 좋게"]];
+const esc = (x) => String(x ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+function wdiff(a, b) {   // 낱말 단위 차이: 더한 말은 노랗게, 뺀 말은 줄 그어서
+  const A = a.trim().split(/\s+/), B = b.trim().split(/\s+/), n = A.length, m = B.length, L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && A[i] === B[j]) { out.push(esc(B[j])); i++; j++; }
+    else if (i < n && (j >= m || L[i + 1][j] >= L[i][j + 1])) { out.push(`<del>${esc(A[i])}</del>`); i++; }
+    else { out.push(`<mark>${esc(B[j])}</mark>`); j++; }
+  }
+  return out.join(" ");
+}
+function prfHtml(c) {
+  const r = c.prf; if (!r) return "";
+  if (r.busy) return `<div class="dim" style="font-size:12px">✍ 첨삭 중…</div>`;
+  if (r.error) return `<div style="color:#ff8a65;font-size:12px">✍ ${esc(r.error)}</div>`;
+  const ln = (x) => `${(x || "").replace(/[\s,.?!]/g, "").length}자 · 약 ${estDur(x).toFixed(1)}초`;
+  return `<div class="prfBox"><div class="prfHd">✍ 첨삭${r.how ? " · " + (PRF_HOW.find((h) => h[0] === r.how) || ["", ""])[1] : ""}${r.ok ? ' <span style="color:#6ee7a0">✓ 크게 고칠 곳 없음</span>' : ""}<span class="grow"></span><button data-pa="close" title="닫기">✕</button></div>
+    ${(r.issues || []).map((x) => `<div class="iss${/사실/.test(x) ? " fact" : ""}">• ${esc(x)}</div>`).join("")}
+    <div class="dim" style="font-size:11px;margin-top:3px">지금: ${ln(c.text)}</div>
+    ${(r.options || []).map((o, k) => `<div class="opt"><div class="ot">${wdiff(c.text || "", o.text)}</div><div class="ow">${esc(o.why)} · <span class="dim">${ln(o.text)}</span></div><div class="row" style="margin:3px 0 0;gap:4px"><button data-pa="apply" data-k="${k}">적용</button><button data-pa="edit" data-k="${k}" title="글 칸에 넣고 직접 손보기">고쳐서 적용</button></div></div>`).join("")}
+    <div class="row" style="flex-wrap:wrap;gap:4px;margin:4px 0 0"><span class="dim" style="font-size:11px">다시:</span>${PRF_HOW.map(([k, l]) => `<button data-pa="how" data-h="${k}">${l}</button>`).join("")}</div>
+    <div class="row" style="margin:4px 0 0"><input data-pa="extra" placeholder="원하는 방향 직접(예: '켈프'를 처음 듣는 사람도 알게)" value="${esc(r.extra || "")}"><button data-pa="ask">↻</button></div></div>`;
+}
+function bindPrf(row, c) {
+  const box = row.querySelector(".prf"); if (!box || !c.prf) return;
+  box.querySelectorAll("[data-pa]").forEach((b) => {
+    const a = b.dataset.pa;
+    if (a === "close") b.onclick = () => { delete c.prf; renderSents(); };
+    if (a === "apply") b.onclick = () => prfApply(c, c.prf.options[+b.dataset.k].text);
+    if (a === "edit") b.onclick = () => { prfApply(c, c.prf.options[+b.dataset.k].text, true); const ta = document.querySelector(`.srow[data-id="${c.id}"] [data-act="text"]`); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } };
+    if (a === "how") b.onclick = () => prfRun([c.id], b.dataset.h, c.prf?.extra || "");
+    if (a === "ask") b.onclick = () => prfRun([c.id], c.prf?.how || "", box.querySelector('[data-pa="extra"]').value.trim());
+  });
+}
+function prfApply(c, txt, keepOpen) {
+  if (!txt || txt === c.text) return; snap(); c.textPrev = c.text; c.text = txt; c.speak = "";
+  if (c.voice) c.voiceStale = true;
+  if (!keepOpen) delete c.prf;
+  renderTL(); draw(); dirty(); renderSents(); flash(c.voice ? "고쳤어요 — 🔊 목소리 다시 만들기를 눌러 주세요" : "고쳤어요");
+}
+async function prfRun(ids, how, extra = "") {
+  const all = sentClips(); if (!all.length) return;
+  const ch = /^소방/.test(projFolder()) ? "sobang" : "jigu";
+  for (let k = 0; k < ids.length; k += 6) {   // 6문장씩 나눠 물어봐요(긴 대본도 빠르게)
+    const part = ids.slice(k, k + 6);
+    part.forEach((id) => { const c = clipById(id); if (c) c.prf = { busy: true }; }); renderSents();
+    const r = await api("/api/proofread", { sents: all.map((x) => ({ id: x.id, n: x.n, text: x.text || "", dur: x.dur })), targets: part, channel: ch, how, extra });
+    part.forEach((id) => { const c = clipById(id); if (!c) return;
+      const it = (r.items || []).find((x) => x.id === id);
+      c.prf = r.error ? { error: r.error } : it ? { ...it, options: (it.options || []).filter((o) => o.text && o.text !== c.text), how, extra } : { error: "답이 없어요. 다시 눌러 주세요." }; });
+    renderSents(); if (r.error) break;
+  }
+}

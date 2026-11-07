@@ -432,6 +432,27 @@ def clip_fix(cur, text, comment, cand, dur, cur_in):
         except Exception: r["action"] = "search"; r.setdefault("search_query", text)
     return r
 
+# ✍ 문장별 첨삭(11-07 "대본 편집하면서 대본 첨삭", "문장별 첨삭"): 대본 전체를 맥락으로 보고, 고른 문장마다 문제점 + 고친 안 2~3개(이유)를 돌려줘요. 바꾸는 건 사용자가 [적용]을 눌러야만.
+SCHEMAS_PRF = {"proofread": {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
+    "id": S_STR, "ok": {"type": "boolean"}, "issues": {"type": "array", "items": S_STR},
+    "options": {"type": "array", "items": {"type": "object", "properties": {"text": S_STR, "why": S_STR}, "required": ["text", "why"]}}},
+    "required": ["id", "ok", "issues", "options"]}}}, "required": ["items"]}}
+PRF_HOW = {"": "맞춤법·띄어쓰기·어색한 표현을 바로잡고 자연스럽게", "short": "뜻은 그대로 두고 더 짧게(글자 수 20~35% 줄이기)", "hook": "다음 문장이 궁금해지게(질문·반전·숫자 강조), 과장 없이",
+           "easy": "초등학생도 바로 알아듣게 쉬운 말로", "voice": "소리 내 읽을 때 리듬이 좋게(쉼표 위치, 숫자·외래어 읽기 쉽게)"}
+def proofread(sents, targets, channel, how, extra):
+    SCHEMAS.update(SCHEMAS_PRF)
+    ch = next((c for c in channels() if c["id"] == channel), None)
+    lines = "\n".join(f"[{x['id']}] {x.get('n') or k + 1}. {x['text']}" + (f"  (지금 {x['dur']:.1f}초)" if x.get("dur") else "") for k, x in enumerate(sents))
+    tg = [x for x in sents if x["id"] in targets] or sents
+    prompt = ((f"채널: {ch['name']}\n채널 규칙:\n{ch['rules']}\n\n" if ch else "") +
+        f"쇼츠 내레이션 대본 전체(맥락용):\n{lines}\n\n첨삭할 문장 id: {', '.join(x['id'] for x in tg)}\n방향: {PRF_HOW.get(how, PRF_HOW[''])}" + (f"\n사용자 요청: {extra}" if extra else "") + "\n\n"
+        "규칙:\n- 문장 하나씩 따로 첨삭해요. 앞뒤 문장과 이어지는 흐름도 봐요(같은 말 반복, 접속어).\n- 끝맺음 말투(~입니다/~죠 등)는 원래 대본의 말투를 따라요.\n"
+        "- 사실·숫자·연도·이름은 바꾸지 마요. 의심스러우면 issues에 '사실 확인 필요: …'로만 적어요. 새 사실을 지어내지 마요.\n"
+        "- 한 문장은 TTS로 읽혀요(초당 약 6.3음절). 너무 길면(9초 넘게 걸림) 짧게 하는 안을 꼭 하나 넣어요.\n"
+        "- options: 고친 안 2~3개. 첫 번째는 가장 적게 고친 안. why는 무엇을 왜 고쳤는지 한국어 한 줄.\n"
+        "- 고칠 게 없으면 ok=true, issues=[], options에 더 좋아질 수 있는 안 1개만(없으면 빈 배열).\n- 대상 문장마다 items 하나씩, id는 대괄호 속 그대로. answer 도구로 돌려줘요.")
+    return claude(prompt, 4000, "proofread")
+
 WONDER = ["bioluminescence", "murmuration starlings", "mimic octopus", "cuttlefish color change", "volcano lava flow", "aurora timelapse", "jellyfish swarm",
           "coral spawning", "humpback whale breach", "slime mold timelapse", "lightning storm slow motion", "glacier calving", "sardine run", "manta ray",
           "hummingbird slow motion", "mantis shrimp", "firefly synchronous", "sea otter", "chameleon tongue", "leafcutter ants", "geyser eruption", "sand dunes wind",
@@ -918,6 +939,8 @@ class H(BaseHTTPRequestHandler):
             import tts_local; return self._json(tts_local.STATE)
         if p == "/api/clip_fix":
             j = self._body(); return self._json(clip_fix(j.get("id"), j.get("text", ""), j.get("comment", ""), j.get("cand", []), float(j.get("dur", 3)), float(j.get("in", 0))))
+        if p == "/api/proofread":
+            j = self._body(); return self._json(proofread(j.get("sents", [])[:60], j.get("targets", []), j.get("channel", ""), j.get("how", ""), j.get("extra", "")))
         if p == "/api/arrange":
             j = self._body(); return self._json(arrange(j.get("sentences", []), j.get("ids", []), j.get("topic", "")))
         if p == "/api/describe": return self._json(describe(self._body().get("items", [])[:40]))
