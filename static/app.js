@@ -42,6 +42,7 @@ async function loadMedia() {
     d.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/media", m.id); });
     d.addEventListener("click", () => { MSEL = m.id; document.querySelectorAll(".mi").forEach((x) => x.classList.toggle("msel", x === d)); });
     d.addEventListener("dblclick", () => insertMedia(m.id, false));
+    if ((m.kind === "video" || m.kind === "image") && m.status === "ready") { const cb = document.createElement("button"); cb.textContent = "✂"; cb.title = "이 원본에서 구간 떠서 문장에 넣기"; cb.style.cssText = "position:absolute;top:3px;right:30px;padding:0 5px;font-size:12px"; cb.onclick = (e) => { e.stopPropagation(); openSrcMon({ mid: m.id }); }; d.appendChild(cb); }
     if (m.kind === "video" && m.status === "ready") { const sb = document.createElement("button"); sb.textContent = "🔗"; sb.title = "이어 붙일 비슷한 영상 찾기"; sb.style.cssText = "position:absolute;top:3px;right:3px;padding:0 5px;font-size:12px"; sb.onclick = (e) => { e.stopPropagation(); findSimilar(m.id); }; d.appendChild(sb); }
     box.appendChild(d);
   });
@@ -246,7 +247,7 @@ function flash(msg) { const d = document.createElement("div"); d.id = "updOv"; d
 function delSel() { if (!sel) return; snap(); P.clips = P.clips.filter((c) => c.id !== sel); sel = null; renderTL(); renderInsp(); draw(); }
 function addText() { snap(); const c = { id: uid(), track: "T1", kind: "text", start: t, in: 0, dur: 3, text: "글자를 입력하세요", size: 64, color: "#ffffff", y: 0.68, stroke: 8 }; P.clips.push(c); sel = c.id; renderTL(); renderInsp(); draw(); }
 $("#btnGap").onclick = closeGaps; $("#btnFill").onclick = fillGaps; $("#btnCut").onclick = cutSel; $("#btnCopy").onclick = copySel; $("#btnPaste").onclick = () => pasteAt(false);
-$("#btnXfAll").onclick = crossfadeAll; $("#btnSplit").onclick = splitAt; $("#btnDel").onclick = delSel; $("#btnText").onclick = addText; $("#btnUndo").onclick = undo; $("#btnRedo").onclick = redo;
+$("#btnSrcMon").onclick = () => openSrcMon(); $("#btnXfAll").onclick = crossfadeAll; $("#btnSplit").onclick = splitAt; $("#btnDel").onclick = delSel; $("#btnText").onclick = addText; $("#btnUndo").onclick = undo; $("#btnRedo").onclick = redo;
 
 // ------------------------------------------------------------ 속성 ----
 function renderInsp() {
@@ -266,10 +267,12 @@ function renderInsp() {
   if ((c.kind === "video" || c.kind === "image") && c.media) h += `<div style="margin-top:10px;padding:8px;border:1px solid var(--acc);border-radius:8px"><b style="font-size:12px">💬 이 장면 코멘트 → Claude가 고쳐요</b>
     <textarea id="fixMemo" placeholder="예: 해달 얼굴이 잘 보이게 / 더 밝은 장면으로 / 성게가 나오는 걸로 / 너무 빨라" style="min-height:48px">${(c.memo || "").replace(/</g, "&lt;")}</textarea>
     <button id="btnFix" style="width:100%">🤖 이 코멘트대로 고쳐 줘</button><div id="fixOut" class="dim" style="font-size:12px;margin-top:4px">${c.fixReply ? "🤖 " + c.fixReply.replace(/</g, "&lt;") : ""}</div></div>`;
+  if ((c.kind === "video" || c.kind === "image") && c.media) h += `<div class="row"><button id="btnRecut" style="width:100%">✂ 원본에서 구간 다시 뜨기</button></div>`;
   if (c.kind === "video" && c.media) h += `<div class="row"><button id="btnSim">🔗 이어 붙일 비슷한 영상 찾기</button></div>`;
   if (MEDIA[c.media]?.credit) { const cr = MEDIA[c.media].credit; h += `<p class="dim" style="font-size:11px">출처: ${cr.source} · ${cr.author} · ${cr.license}<br><a href="${cr.page}" target="_blank" style="color:#7fd0ff">${cr.page}</a></p>`; }
   box.innerHTML = h;
   const bs = $("#btnSim"); if (bs) bs.onclick = () => findSimilar(c.media);
+  const brc = $("#btnRecut"); if (brc) brc.onclick = () => openSrcMon({ fromClip: c });
   const bf = $("#btnFix"); if (bf) { $("#fixMemo").oninput = (e) => { c.memo = e.target.value; dirty(); }; bf.onclick = () => clipFix(c); }
   box.querySelectorAll("[data-sp]").forEach((b) => (b.onclick = () => setSpeed(c, +b.dataset.sp)));
   box.querySelectorAll("[data-zm]").forEach((b) => (b.onclick = () => { if (b.dataset.zm === "off") { snap(); delete c.zoomEnd; c.zoom = 1; renderInsp(); draw(); } else { const [a, z] = b.dataset.zm.split(",").map(Number); setZoomAnim(c, a, z); } }));
@@ -396,6 +399,7 @@ addEventListener("keydown", (e) => {
   if (e.code === "Space") { e.preventDefault(); togglePlay(); }
   else if (k === "s" || k === "c") splitAt();
   else if (k === "t") addText();
+  else if (k === "f") openSrcMon(clipById(sel)?.track === "V1" ? { fromClip: clipById(sel) } : {});
   else if (e.key === "," && MSEL) insertMedia(MSEL, false);
   else if (e.key === "." && MSEL) insertMedia(MSEL, true);
   else if (k === "q") rippleTrim("start");
@@ -671,7 +675,7 @@ function renderSents() {
     <textarea data-act="text">${(c.text || "").replace(/</g, "&lt;")}</textarea>
     <div class="row" style="margin:4px 0 0"><input class="memo" data-act="speak" style="margin:0" placeholder="읽는 법(비우면 자동: 숫자→한글)" value="${(c.speak || "").replace(/"/g, "&quot;")}"><button data-act="voice" style="font-size:12px;padding:3px 7px;white-space:nowrap">🔊 목소리${c.voice && MEDIA[c.voice] ? " ✓" : ""}</button></div>
     <input class="memo" data-act="memo" placeholder="코멘트·요청(예: 해달이 털 고르는 클로즈업, 바다 위에서)" value="${(c.memo || "").replace(/"/g, "&quot;")}">
-    <div class="btns"><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}<button data-act="ask" class="${c.veoAsk ? "on" : ""}" title="이 문장 Veo를 Claude에게 맡겨요(저장 후 채팅에 'Veo 맡겼어')">🤖 ${c.veoAsk ? "Claude에게 맡김 ✓" : "Claude에게 맡기기"}</button></div>
+    <div class="btns"><button data-act="cut" class="on" title="원본을 돌려 보며 I·O를 찍어 이 문장 자리에 넣기">✂ 구간 뜨기</button><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}<button data-act="ask" class="${c.veoAsk ? "on" : ""}" title="이 문장 Veo를 Claude에게 맡겨요(저장 후 채팅에 'Veo 맡겼어')">🤖 ${c.veoAsk ? "Claude에게 맡김 ✓" : "Claude에게 맡기기"}</button></div>
     <div class="res">${c.veo ? veoHtml(c.veo) : ""}</div></div>`; }).join("");
   $("#btnArrange").onclick = arrangeAll;
   $("#btnVoiceAll").onclick = async () => { const all = sentClips(); for (let k = 0; k < all.length; k++) { $("#voiceState").textContent = `목소리 만드는 중 ${k + 1}/${all.length}…`; const ok = await sentVoice(all[k], true); if (!ok) break; } $("#voiceState").textContent = "다 만들었어요 ✓"; renderSents(); };
@@ -682,6 +686,7 @@ function renderSents() {
     row.querySelector('[data-act="speak"]').oninput = (e) => { c.speak = e.target.value; dirty(); };
     row.querySelector('[data-act="voice"]').onclick = async (e) => { e.target.textContent = "🔊 만드는 중…"; await sentVoice(c); renderSents(); };
     row.querySelector('[data-act="go"]').onclick = () => { sel = c.id; seek(c.start); togglePlay(true); };
+    row.querySelector('[data-act="cut"]').onclick = () => openSrcMon({ sid: c.id });
     row.querySelector('[data-act="vid"]').onclick = () => sentFind(c, row, "video");
     row.querySelector('[data-act="img"]').onclick = () => sentFind(c, row, "image");
     row.querySelector('[data-act="veo"]').onclick = () => sentVeo(c, row);
@@ -875,3 +880,165 @@ setInterval(checkUpdate, 180000);   // 3분마다(GitHub API 한도: 시간당 6
   if (last) { const pj = await api("/api/project?name=" + encodeURIComponent(last)); if (pj && pj.clips) { P = pj; afterLoad(); relink(); setTimeout(checkUpdate, 3000); return; } }
   afterLoad(); setTimeout(checkUpdate, 3000);
 })();
+
+// ------------------------------------------------------------ ✂ 원본에서 구간 뜨기 ----
+// 11-07 "대본을 내가 원하는 대로 클립을 뜰 수 있게": 문장을 고르고, 원본 영상을 돌려 보며 I(시작)·O(끝)를 찍어 그 문장 자리에 넣어요(프리미어 소스 모니터처럼)
+const SM = { open: false, mid: null, i: null, o: null, sid: null, fromClip: null, cur: {}, all: false };
+const smV = document.createElement("video"); smV.playsInline = true; smV.preload = "auto";
+function smSents() { return sentClips(); }
+function smSent() { return clipById(SM.sid); }
+function smSentAt(tt) { const ss = smSents(); return ss.find((x) => tt >= x.start - 1e-3 && tt < x.start + x.dur) || ss[0]; }
+function openSrcMon(opt = {}) {
+  if (playing) togglePlay(false);
+  const ss = smSents(); if (!ss.length && !opt.fromClip) return alert("글자 트랙에 문장이 없어요. 먼저 대본(자막)을 넣어 주세요.");
+  SM.open = true; SM.fromClip = opt.fromClip || null;
+  SM.sid = opt.sid || (SM.fromClip ? smSentAt(SM.fromClip.start + 0.05)?.id : (clipById(sel)?.kind === "text" ? sel : smSentAt(t)?.id));
+  let ov = $("#srcMon"); if (!ov) { ov = document.createElement("div"); ov.id = "srcMon"; document.body.appendChild(ov); }
+  ov.innerHTML = `<div class="smTop"><b>✂ 원본에서 구간 뜨기</b>
+      <button id="smPrev" title="앞 문장 ([)">◀</button><select id="smSel"></select><button id="smNext" title="다음 문장 (])">▶</button>
+      <span class="grow"></span><span class="dim" style="font-size:12px">I 시작 · O 끝 · 스페이스 재생 · ←→ 한 프레임(Shift 1초) · Enter 채우기 · , 이어 넣기 · Esc 닫기</span><button id="smClose">✕ 닫기</button></div>
+    <div id="smSentBox"></div>
+    <div class="smBody"><div class="smLeft"><div class="row" style="margin:0 0 6px"><b style="font-size:12px">원본</b><span class="grow"></span><label style="font-size:12px"><input type="checkbox" id="smAll"${SM.all ? " checked" : ""}> 모든 미디어</label></div><div id="smList"></div></div>
+      <div class="smMain"><div class="smView"></div>
+        <div id="smBar"><div class="rng"></div><div class="ph"></div></div>
+        <div class="row" style="justify-content:center;flex-wrap:wrap"><span id="smTc" class="tc">00:00.00</span>
+          <button id="smBk">◀︎ 1프레임</button><button id="smPlay">▶ 재생</button><button id="smFw">1프레임 ▶︎</button>
+          <button id="smI" class="mk">I 시작 찍기</button><button id="smO" class="mk">O 끝 찍기</button><button id="smPv">⟲ 구간만 보기</button><button id="smClr">찍은 것 지우기</button></div>
+        <div id="smInfo" class="dim" style="text-align:center;font-size:13px"></div>
+        <div class="row smAct" style="justify-content:center;flex-wrap:wrap">
+          <button id="smFill" class="pri" title="Enter">▶ 이 문장 자리를 이 구간으로 채우기</button>
+          <button id="smApp" title=",">＋ 이 문장에 이어 넣기</button>
+          <button id="smOver" title=".">재생선 자리에 덮어쓰기</button>
+          <button id="smRep" class="hidden">↺ 고른 클립을 이 구간으로 바꾸기</button></div>
+        <div class="row" style="justify-content:center"><label style="font-size:12px"><input type="checkbox" id="smNextAuto" checked> 문장 자리가 다 차면 다음 문장으로</label></div>
+      </div></div>`;
+  ov.querySelector(".smView").appendChild(smV);
+  $("#smClose").onclick = closeSrcMon; $("#smPrev").onclick = () => smStep(-1); $("#smNext").onclick = () => smStep(1);
+  $("#smSel").onchange = (e) => smSetSent(e.target.value);
+  $("#smAll").onchange = (e) => { SM.all = e.target.checked; smList(); };
+  $("#smBk").onclick = () => smSeek(smV.currentTime - 1 / 30); $("#smFw").onclick = () => smSeek(smV.currentTime + 1 / 30);
+  $("#smPlay").onclick = () => smPlay(); $("#smI").onclick = () => smMark("i"); $("#smO").onclick = () => smMark("o");
+  $("#smPv").onclick = () => { if (SM.i == null) return; smSeek(SM.i); SM.pvEnd = SM.o ?? null; smV.play(); };
+  $("#smClr").onclick = () => { SM.i = SM.o = null; smUpd(); };
+  $("#smFill").onclick = smFill; $("#smApp").onclick = smAppend; $("#smOver").onclick = smOver; $("#smRep").onclick = smReplace;
+  const bar = $("#smBar"); bar.onmousedown = (e) => { const go = (ev) => { const r = bar.getBoundingClientRect(); smSeek(((ev.clientX - r.left) / r.width) * (smV.duration || 0)); }; go(e); const mv = (ev) => go(ev), up = () => { removeEventListener("mousemove", mv); removeEventListener("mouseup", up); }; addEventListener("mousemove", mv); addEventListener("mouseup", up); };
+  smV.ontimeupdate = () => { if (SM.pvEnd != null && smV.currentTime >= SM.pvEnd) { smV.pause(); SM.pvEnd = null; } smUpd(true); };
+  smV.onplay = smV.onpause = () => { const b = $("#smPlay"); if (b) b.textContent = smV.paused ? "▶ 재생" : "❚❚ 멈춤"; };
+  smV.onloadedmetadata = () => { if (SM._seekTo != null) { smV.currentTime = SM._seekTo; SM._seekTo = null; } smUpd(); };
+  if (SM.fromClip) { const c = SM.fromClip; SM.i = c.in; SM.o = c.in + c.dur * (c.speed || 1); smLoad(c.media, c.in, true); }
+  else if (opt.mid) smLoad(opt.mid, 0); else if (!SM.mid) { const f = smMedia()[0]; if (f) smLoad(f.id, 0); } else smLoad(SM.mid, smV.currentTime || 0, true);
+  smFillSel(); smSetSent(SM.sid, true); smList();
+}
+function closeSrcMon() { SM.open = false; smV.pause(); const ov = $("#srcMon"); if (ov) ov.remove(); renderTL(); renderInsp(); draw(); if ($("#sentList")) renderSents(); }
+function smMedia() {
+  const f = "sources/" + projFolder() + "/", ms = Object.values(MEDIA).filter((m) => m.status === "ready" && (m.kind === "video" || m.kind === "image") && !/^veo_|voice/.test(m.name || ""));
+  const mine = ms.filter((m) => (m.rel || "").startsWith(f)); return SM.all || !mine.length ? ms : mine;
+}
+function smList() {
+  const box = $("#smList"); if (!box) return;
+  const used = new Set(P.clips.filter((c) => c.track === "V1").map((c) => c.media));
+  box.innerHTML = smMedia().map((m) => `<div class="smi${m.id === SM.mid ? " on" : ""}" data-m="${m.id}"><img src="/media/${m.id}/thumb.jpg" alt=""><div class="nm">${m.kind === "image" ? "🖼 " : ""}${(m.desc_ko || m.name || "").replace(/</g, "&lt;")}</div><div class="b">${m.kind === "video" ? m.dur.toFixed(1) + "초" : "사진"}${used.has(m.id) ? " · 씀" : ""}</div></div>`).join("") || '<p class="dim">이 편 폴더에 영상이 없어요. "모든 미디어"를 켜 보세요.</p>';
+  box.querySelectorAll("[data-m]").forEach((d) => (d.onclick = () => { if (SM.fromClip && d.dataset.m !== SM.fromClip.media) { /* 다른 원본으로 바꿔도 돼요 */ } SM.i = SM.o = null; smLoad(d.dataset.m, 0); smList(); }));
+}
+function smLoad(mid, at = 0, keep) {
+  const m = MEDIA[mid]; if (!m) return; SM.mid = mid; if (!keep) { SM.i = SM.o = null; }
+  const v = $(".smView"); if (!v) return;
+  v.querySelector("img")?.remove();
+  if (m.kind === "image") { smV.pause(); smV.style.display = "none"; const im = new Image(); im.src = `/media/${mid}/proxy.jpg`; v.appendChild(im); }
+  else { smV.style.display = ""; const src = `/media/${mid}/proxy.mp4`; if (!smV.src.endsWith(src)) { SM._seekTo = at; smV.src = src; } else smV.currentTime = at; }
+  $("#smBar").style.backgroundImage = m.kind === "video" ? `url(/media/${mid}/strip.jpg)` : "none";
+  smUpd();
+}
+function smSeek(s) { if (!smV.duration) return; smV.currentTime = Math.max(0, Math.min(smV.duration - 0.01, s)); smUpd(true); }
+function smPlay() { if (MEDIA[SM.mid]?.kind !== "video") return; SM.pvEnd = null; smV.paused ? smV.play() : smV.pause(); }
+function smMark(w) { if (MEDIA[SM.mid]?.kind !== "video") return; const x = smV.currentTime; if (w === "i") { SM.i = x; if (SM.o != null && SM.o <= x) SM.o = null; } else { SM.o = x; if (SM.i == null || SM.i >= x) SM.i = Math.max(0, x - 3); } smUpd(); }
+function smRange() {   // [시작, 끝] 원본 초. 사진은 문장 길이 전체
+  const m = MEDIA[SM.mid]; if (!m) return null;
+  if (m.kind === "image") return { a: 0, b: null, len: null };
+  const a = SM.i ?? smV.currentTime ?? 0, b = SM.o ?? m.dur; return { a, b, len: Math.max(0, b - a) };
+}
+function smFillSel() { const s = $("#smSel"); if (!s) return; s.innerHTML = smSents().map((c, k) => `<option value="${c.id}">${c.n || k + 1}. ${(c.text || "").slice(0, 26).replace(/</g, "&lt;")}</option>`).join(""); }
+function smSetSent(id, quiet) {
+  SM.sid = id; const c = smSent(); const s = $("#smSel"); if (s && id) s.value = id;
+  if (c && !quiet) { t = c.start; placeHead(); }
+  smSentBox(); smUpd();
+}
+function smStep(d) { const ss = smSents(), k = ss.findIndex((x) => x.id === SM.sid); const n = ss[Math.max(0, Math.min(ss.length - 1, k + d))]; if (n) smSetSent(n.id); }
+function smSentBox() {
+  const box = $("#smSentBox"); if (!box) return; const c = smSent(); if (!c) { box.innerHTML = ""; return; }
+  const st = c.start, en = c.start + c.dur, cur = SM.cur[c.id] ?? st;
+  const vs = P.clips.filter((x) => x.track === "V1" && x.start < en - 0.02 && x.start + x.dur > st + 0.02).sort((a, b) => a.start - b.start);
+  box.innerHTML = `<div class="smSent"><b>${c.n || ""}</b> ${(c.text || "").replace(/</g, "&lt;")}</div>
+    <div class="smSlot"><span class="dim">이 문장 자리 ${fmt(st)} ~ ${fmt(en)} (${c.dur.toFixed(1)}초)${cur >= en - 0.1 ? " · 다 찼어요 ✓" : cur > st + 0.01 ? ` · 이어 넣을 곳 ${(cur - st).toFixed(1)}초부터` : ""} · 지금 들어 있는 영상(누르면 그 클립을 다시 떠요):</span>
+    <div class="slotbar">${vs.map((x) => { const a = Math.max(st, x.start), b = Math.min(en, x.start + x.dur); return `<span class="sc${SM.fromClip?.id === x.id ? " on" : ""}" data-c="${x.id}" style="left:${((a - st) / c.dur) * 100}%;width:${((b - a) / c.dur) * 100}%;background-image:url(/media/${x.media}/thumb.jpg)" title="${(MEDIA[x.media]?.name || "").replace(/"/g, "")} · ${(b - a).toFixed(1)}초"></span>`; }).join("")}${cur > st + 0.01 && cur < en ? `<i style="left:${((cur - st) / c.dur) * 100}%"></i>` : ""}</div></div>`;
+  box.querySelectorAll("[data-c]").forEach((d) => (d.onclick = () => { const x = clipById(d.dataset.c); SM.fromClip = x; sel = x.id; SM.i = x.in; SM.o = x.in + x.dur * (x.speed || 1); smLoad(x.media, x.in, true); smList(); smSentBox(); }));
+  const rp = $("#smRep"); if (rp) rp.classList.toggle("hidden", !SM.fromClip);
+  if ($("#smNotes")) $("#smNotes").remove();
+  if (c.memo) box.insertAdjacentHTML("beforeend", `<div id="smNotes" class="dim" style="font-size:12px">💬 ${c.memo.replace(/</g, "&lt;")}</div>`);
+}
+function smUpd(light) {
+  const m = MEDIA[SM.mid], dur = smV.duration || m?.dur || 1, bar = $("#smBar"); if (!bar) return;
+  bar.querySelector(".ph").style.left = (smV.currentTime / dur) * 100 + "%";
+  const rg = bar.querySelector(".rng"); if (SM.i != null && m?.kind === "video") { const b = SM.o ?? m.dur; rg.style.display = ""; rg.style.left = (SM.i / dur) * 100 + "%"; rg.style.width = ((b - SM.i) / dur) * 100 + "%"; } else rg.style.display = "none";
+  $("#smTc").textContent = m?.kind === "video" ? `${fmt(smV.currentTime)} / ${fmt(m.dur)}` : "사진";
+  if (light) return;
+  const c = smSent(), r = smRange(); const info = $("#smInfo"); if (!info) return;
+  if (!m) { info.textContent = "왼쪽에서 원본을 고르세요."; return; }
+  if (m.kind === "image") { info.innerHTML = c ? `사진은 문장 자리(${c.dur.toFixed(1)}초)를 천천히 줌인하며 채워요.` : ""; return; }
+  const ln = r.len, need = c ? c.dur : 0;
+  let s = `구간 <b>${SM.i != null ? fmt(SM.i) : "(I 안 찍음: 지금 위치)"}</b> → <b>${SM.o != null ? fmt(SM.o) : "(O 안 찍음: 원본 끝)"}</b> = <b style="color:var(--acc)">${ln.toFixed(1)}초</b>`;
+  if (c) s += ` · 문장 자리 ${need.toFixed(1)}초 → ` + (ln >= need - 0.05 ? (ln - need > 0.1 ? `채우면 구간 끝 ${(ln - need).toFixed(1)}초는 안 써요` : "딱 맞아요 ✓") : (ln / need >= 0.5 ? `채우면 ${(ln / need).toFixed(2)}배 느리게(슬로) 늘려요` : `너무 짧아요 → "이어 넣기"로 여러 구간을 붙이세요`));
+  info.innerHTML = s;
+}
+function smClip(start, len, extra) {   // 원본 구간을 영상 트랙 [start, start+len]에 넣어요
+  const m = MEDIA[SM.mid], img = m.kind === "image";
+  cutRange("V1", start, start + len);
+  const c = { id: uid(), track: "V1", kind: img ? "image" : "video", media: SM.mid, src: m.rel || m.path, start, in: img ? 0 : smRange().a, dur: len, vol: 0, fit: "cover", zoom: 1, x: 0.5, y: 0.5, speed: 1, ...(extra || {}) };
+  if (img) { c.zoomEnd = 1.15; c.xEnd = 0.5; c.yEnd = 0.5; }
+  P.clips.push(c); sel = c.id; return c;
+}
+function smAfter(c, full) {
+  dirty(); renderTL(); draw();
+  if (full && $("#smNextAuto")?.checked) { const ss = smSents(), k = ss.findIndex((x) => x.id === c.id); if (ss[k + 1]) { smSetSent(ss[k + 1].id); flash(`${c.n || k + 1}번 넣었어요 → 다음 문장`); return; } }
+  smSentBox(); smUpd();
+}
+function smFill() {
+  const c = smSent(), r = smRange(); if (!c || !r) return; snap(); SM.fromClip = null;
+  const m = MEDIA[SM.mid];
+  if (m.kind === "image") smClip(c.start, c.dur);
+  else { if (r.len < 0.2) return alert("구간이 너무 짧아요. I·O를 다시 찍어 주세요.");
+    const sp = r.len >= c.dur ? 1 : Math.max(0.5, +(r.len / c.dur).toFixed(2)), len = r.len >= c.dur ? c.dur : Math.min(c.dur, r.len / sp);
+    smClip(c.start, len, { speed: sp }); SM.cur[c.id] = c.start + len; SM.i = SM.o = null;
+    if (len < c.dur - 0.1) { smAfter(c, false); flash(`2배 슬로로도 ${(c.dur - len).toFixed(1)}초 모자라요 → 나머지는 "이어 넣기"로 채우세요`); return; } }
+  SM.cur[c.id] = c.start + c.dur; SM.i = SM.o = null; smAfter(c, true);
+}
+function smAppend() {
+  const c = smSent(), r = smRange(); if (!c || !r) return; const en = c.start + c.dur; let cur = SM.cur[c.id] ?? c.start;
+  if (cur >= en - 0.1) { if (!confirm("이 문장 자리는 이미 다 찼어요. 처음부터 다시 넣을까요?")) return; cur = c.start; }
+  const m = MEDIA[SM.mid], len = Math.min(m.kind === "image" ? 2.5 : r.len, en - cur); if (len < 0.2) return alert("구간이 너무 짧아요.");
+  snap(); SM.fromClip = null; smClip(cur, len); SM.cur[c.id] = cur + len; SM.i = SM.o = null;
+  smAfter(c, cur + len >= en - 0.1);
+}
+function smOver() {
+  const r = smRange(); if (!r) return; const m = MEDIA[SM.mid], len = m.kind === "image" ? 3 : r.len; if (len < 0.2) return alert("구간이 너무 짧아요.");
+  snap(); SM.fromClip = null; smClip(t, len); t += len; placeHead(); SM.i = SM.o = null; dirty(); renderTL(); draw(); smSentBox(); smUpd(); flash("재생선 자리에 넣었어요");
+}
+function smReplace() {
+  const x = SM.fromClip && clipById(SM.fromClip.id), r = smRange(); if (!x || !r) return; const m = MEDIA[SM.mid];
+  snap(); x.media = SM.mid; x.src = m.rel || m.path; x.kind = m.kind === "image" ? "image" : "video";
+  if (m.kind === "video") { const sp = Math.min(2, Math.max(0.5, +(r.len / x.dur).toFixed(2))); x.in = r.a; x.speed = Math.abs(sp - 1) < 0.04 ? 1 : sp; }
+  else { x.in = 0; x.speed = 1; x.zoom = 1; x.zoomEnd = 1.15; }
+  delete x.ai; SM.fromClip = null; SM.i = SM.o = null; dirty(); renderTL(); draw(); smSentBox(); smUpd(); flash("그 클립 구간을 바꿨어요(길이·위치 그대로)");
+}
+addEventListener("keydown", (e) => {
+  if (!SM.open || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) && e.key !== "Escape") return;
+  const k = e.key.toLowerCase(); if (e.ctrlKey || e.metaKey) { if (k === "z") { e.preventDefault(); e.stopImmediatePropagation(); undo(); smSentBox(); } return; }
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (e.key === "Escape") closeSrcMon();
+  else if (e.code === "Space") smPlay();
+  else if (k === "i") smMark("i"); else if (k === "o") smMark("o");
+  else if (e.key === "ArrowLeft") smSeek(smV.currentTime - (e.shiftKey ? 1 : 1 / 30));
+  else if (e.key === "ArrowRight") smSeek(smV.currentTime + (e.shiftKey ? 1 : 1 / 30));
+  else if (e.key === "Enter") smFill(); else if (e.key === ",") smAppend(); else if (e.key === ".") smOver();
+  else if (e.key === "[" || e.key === "PageUp") smStep(-1); else if (e.key === "]" || e.key === "PageDown") smStep(1);
+}, true);
