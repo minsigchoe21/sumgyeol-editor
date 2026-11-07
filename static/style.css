@@ -109,3 +109,20 @@ footer#tl{position:absolute;left:0;right:0;bottom:0;height:250px;border-top:1px 
 .prfBox .ow{color:var(--dim);font-size:11px;margin-top:2px}
 .prfBox button{font-size:11px;padding:2px 7px}.prfBox input{font-size:11px;padding:3px 6px}
 .prfBox .ot del{color:#ff8a8a;opacity:.7}
+
+/* 📝 대본 지시하기 */
+.flow{font-size:11px;color:var(--dim);margin:4px 0 6px}.flow b{color:var(--fg);font-weight:600}
+.dirBox{border:1px solid var(--acc);border-radius:8px;padding:8px;margin:6px 0;background:#1a1d16}
+.dirBox textarea{width:100%;min-height:58px;margin-top:6px;background:#262b34;color:var(--fg);border:1px solid var(--line);border-radius:6px;font:inherit;font-size:13px}
+.dirBox .chip{font-size:11px;padding:2px 7px;border-radius:12px}
+.dirBox button.pri{background:var(--acc);color:#111;font-weight:700;border-color:var(--acc)}
+.dirRes{margin-top:6px;border-top:1px solid var(--line);padding-top:4px}
+.dr{display:block;font-size:12px;padding:4px 5px;margin:3px 0;border-radius:5px;line-height:1.45}
+.dr.keep{color:var(--dim)}.dr .no{color:var(--dim);margin-right:5px}
+.dr.edit{background:#2a2614}.dr.new{background:#14281c}.dr.del{background:#2a1616}
+.dr input{width:auto;margin:0 5px 0 0;vertical-align:middle}.dr .tag{font-size:10px;font-weight:700;margin-right:5px;padding:0 4px;border-radius:3px;background:#0005}
+.dr.new .tag{color:#6ee7a0}.dr.edit .tag{color:var(--acc)}.dr.del .tag{color:#ff8a8a}
+.dr .tx mark{background:#ffd54a55;color:#fff;border-radius:3px}.dr .tx del{color:#ff8a8a;opacity:.75}
+.dr .why{display:block;color:var(--dim);font-size:11px;margin-left:22px}
+.dirRes .chk{font-size:11px;color:#ff8a65;margin:6px 0;border:1px dashed #ff8a6566;border-radius:5px;padding:4px 6px}
+.tab .dirRes label.dr input{width:auto;margin:0 5px 0 0;display:inline-block}.tab .dirRes label.dr{margin:3px 0}

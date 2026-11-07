@@ -453,6 +453,27 @@ def proofread(sents, targets, channel, how, extra):
         "- 고칠 게 없으면 ok=true, issues=[], options에 더 좋아질 수 있는 안 1개만(없으면 빈 배열).\n- 대상 문장마다 items 하나씩, id는 대괄호 속 그대로. answer 도구로 돌려줘요.")
     return claude(prompt, 4000, "proofread")
 
+# 📝 대본 지시하기(11-07 "대본 지시하기 버튼", "대본 지시하고 → 내가 수정하고 → 첨삭"): 지시대로 대본을 새로 쓰거나 고쳐요. 결과는 미리보기로만 주고, 적용은 사용자가.
+SCHEMAS_DIR = {"direct": {"type": "object", "properties": {
+    "summary_ko": S_STR,
+    "sentences": {"type": "array", "items": {"type": "object", "properties": {"id": S_STR, "text": S_STR, "change": {"type": "string", "enum": ["keep", "edit", "new"]}, "why": S_STR}, "required": ["id", "text", "change"]}},
+    "removed": {"type": "array", "items": {"type": "object", "properties": {"id": S_STR, "why": S_STR}, "required": ["id"]}},
+    "check": {"type": "array", "items": S_STR}}, "required": ["summary_ko", "sentences"]}}
+def direct(sents, instruction, channel, topic):
+    SCHEMAS.update(SCHEMAS_DIR)
+    ch = next((c for c in channels() if c["id"] == channel), None)
+    cur = "\n".join(f"[{x['id']}] {x['text']}" for x in sents) or "(아직 대본 없음)"
+    prompt = ((f"채널: {ch['name']}\n채널 규칙:\n{ch['rules']}\n\n" if ch else "") + (f"편 주제(폴더): {topic}\n" if topic else "") +
+        f"지금 대본(문장마다 [id]):\n{cur}\n\n사용자 지시: {instruction}\n\n"
+        "지시대로 대본을 고치거나(대본이 없으면 새로 써서) answer 도구로 돌려줘요.\n"
+        "- sentences: 고친 뒤의 전체 대본을 순서대로. 원래 문장을 그대로 두면 change=keep(id 그대로, text 그대로), 고치면 change=edit(id 그대로), 새 문장은 change=new(id는 빈 문자열).\n"
+        "- 원래 문장들의 순서는 바꾸지 마요(옮기고 싶으면 지우고 새 문장으로). 지운 문장은 removed에 id와 이유.\n"
+        "- 지시와 상관없는 문장은 keep. 지시가 전체를 바꾸라는 것일 때만 많이 고쳐요.\n"
+        "- 한 문장 = 화면 자막 한 덩이·TTS 한 번(초당 약 6.3음절, 한 문장 9초 이하). 말투는 원래 대본을 따르고, 없으면 채널 규칙.\n"
+        "- 사실·숫자는 확실한 것만. 확인이 필요한 사실은 check에 '문장 내용 → 확인할 것'으로 적어요. 지어내지 마요.\n"
+        "- why: 바꾼 이유 한국어 한 줄. summary_ko: 무엇을 했는지 한두 문장.")
+    return claude(prompt, 6000, "direct")
+
 WONDER = ["bioluminescence", "murmuration starlings", "mimic octopus", "cuttlefish color change", "volcano lava flow", "aurora timelapse", "jellyfish swarm",
           "coral spawning", "humpback whale breach", "slime mold timelapse", "lightning storm slow motion", "glacier calving", "sardine run", "manta ray",
           "hummingbird slow motion", "mantis shrimp", "firefly synchronous", "sea otter", "chameleon tongue", "leafcutter ants", "geyser eruption", "sand dunes wind",
@@ -939,6 +960,8 @@ class H(BaseHTTPRequestHandler):
             import tts_local; return self._json(tts_local.STATE)
         if p == "/api/clip_fix":
             j = self._body(); return self._json(clip_fix(j.get("id"), j.get("text", ""), j.get("comment", ""), j.get("cand", []), float(j.get("dur", 3)), float(j.get("in", 0))))
+        if p == "/api/direct":
+            j = self._body(); return self._json(direct(j.get("sents", [])[:80], j.get("instruction", ""), j.get("channel", ""), j.get("topic", "")))
         if p == "/api/proofread":
             j = self._body(); return self._json(proofread(j.get("sents", [])[:60], j.get("targets", []), j.get("channel", ""), j.get("how", ""), j.get("extra", "")))
         if p == "/api/arrange":
