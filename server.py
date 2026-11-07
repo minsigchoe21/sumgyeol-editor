@@ -704,6 +704,14 @@ def hist_snap(f, force=False):
         try: os.remove(os.path.join(HIST, old))
         except Exception: pass
     return out
+TRASH = os.path.join(PROJ, "_trash"); HIDF = os.path.join(PROJ, "_inbox_hidden.json")   # 11-07 "초안 삭제도 만들어줘"
+def inbox_hidden():
+    try: return set(json.load(open(HIDF, encoding="utf-8")))
+    except Exception: return set()
+def trash_list():
+    if not os.path.isdir(TRASH): return []
+    out = [{"file": x, "name": x.rsplit("__", 1)[0], "t": os.path.getmtime(os.path.join(TRASH, x))} for x in os.listdir(TRASH) if x.endswith(".shum")]
+    return sorted(out, key=lambda o: -o["t"])
 def hist_list(name):
     base = os.path.basename(proj_path(name))[:-5]; out = []
     if os.path.isdir(HIST):
@@ -808,8 +816,8 @@ class H(BaseHTTPRequestHandler):
             try:
                 req = urllib.request.Request(f"https://api.github.com/repos/{REPO}/contents/inbox?ref=main", headers={"User-Agent": "sumgyeol-editor"})
                 with urllib.request.urlopen(req, timeout=10) as r: lst = json.loads(r.read().decode())
-                names = [f["name"][:-5] for f in lst if f["name"].endswith(".shum")]
-                return self._json({"items": [{"name": n, "have": os.path.exists(proj_path(n))} for n in names]})
+                names = [f["name"][:-5] for f in lst if f["name"].endswith(".shum")]; hid = inbox_hidden()
+                return self._json({"items": [{"name": n, "have": os.path.exists(proj_path(n))} for n in names if n not in hid], "hidden": [n for n in names if n in hid]})
             except Exception as e: return self._json({"items": [], "error": str(e)})
         if p == "/api/inbox/take":   # 초안을 받아 projects에 저장
             bd = self._body(); n = bd.get("name", "")
@@ -823,6 +831,22 @@ class H(BaseHTTPRequestHandler):
                 if not bd.get("overwrite"): return self._json({"ok": False, "exists": True, "name": n})
                 hist_snap(f, force=True)
             json.dump(j, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1); return self._json({"ok": True, "name": n})
+        if p == "/api/project/delete":   # 지우기 = 휴지통(_trash)으로 옮기기. 되살릴 수 있어요
+            f = proj_path(self._body().get("name", ""))
+            if not os.path.exists(f): return self._json({"ok": False, "error": "없음"})
+            os.makedirs(TRASH, exist_ok=True); hist_snap(f, force=True)
+            os.replace(f, os.path.join(TRASH, os.path.basename(f)[:-5] + "__" + time.strftime("%Y%m%d_%H%M%S") + ".shum")); return self._json({"ok": True})
+        if p == "/api/trash": return self._json(trash_list())
+        if p == "/api/trash/restore":
+            x = os.path.basename(self._body().get("file", "")); src = os.path.join(TRASH, x)
+            if not x.endswith(".shum") or not os.path.exists(src): return self._json({"ok": False, "error": "없음"})
+            n = x.rsplit("__", 1)[0]; f = proj_path(n)
+            if os.path.exists(f): n = n + time.strftime("_되살림%m%d%H%M"); f = proj_path(n)
+            os.replace(src, f); return self._json({"ok": True, "name": n})
+        if p == "/api/inbox/hide":   # Claude 초안 목록에서 숨기기(GitHub의 초안 파일은 그대로)
+            bd = self._body(); n = bd.get("name", ""); show = bool(bd.get("show"))
+            h = inbox_hidden(); (h.discard if show else h.add)(n)
+            json.dump(sorted(h), open(HIDF, "w", encoding="utf-8"), ensure_ascii=False); return self._json({"ok": True})
         if p == "/api/prefetch":
             items = self._body().get("fetch", [])
             if PREFETCH["done"]: threading.Thread(target=prefetch, args=(items,), daemon=True).start()

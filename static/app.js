@@ -442,19 +442,33 @@ function confirmBox() { return window.confirm("지금 프로젝트는 저장됐�
 const loadProj = async (n) => { P = await api("/api/project?name=" + encodeURIComponent(n)); undoS.length = redoS.length = 0; closeModal(); afterLoad(); relink(); };
 $("#btnOpen").onclick = async () => {
   const names = await api("/api/projects");
-  modal(`<h3>프로젝트 열기</h3><div class="plist">${names.map((n) => `<div class="row" style="margin:3px 0"><button class="grow" data-n="${n}">${n}</button><button data-h="${n}" title="저장할 때마다 남긴 이전 판">🕘 이전 판</button></div>`).join("") || '<p class="dim">저장된 프로젝트가 없어요.</p>'}</div><h3 style="margin-top:14px">Claude가 만든 초안</h3><div id="inboxL" class="plist"><p class="dim">불러오는 중…</p></div>`);
+  modal(`<h3>프로젝트 열기</h3><div class="plist">${names.map((n) => `<div class="row" style="margin:3px 0"><button class="grow" data-n="${n}">${n}${n === P.name ? ' <span class="dim">(지금 연 것)</span>' : ""}</button><button data-h="${n}" title="저장할 때마다 남긴 이전 판">🕘</button><button data-del="${n}" title="삭제(휴지통으로, 되살릴 수 있어요)">🗑</button></div>`).join("") || '<p class="dim">저장된 프로젝트가 없어요.</p>'}</div><h3 style="margin-top:14px">Claude가 만든 초안</h3><div id="inboxL" class="plist"><p class="dim">불러오는 중…</p></div><div id="trashL" style="margin-top:12px"></div>`);
   api("/api/inbox", {}).then((r) => {
     const box = $("#inboxL"); if (!box) return;
-    box.innerHTML = (r.items || []).map((x) => x.have
-      ? `<div class="row" style="margin:3px 0"><button class="grow" data-n2="${x.name}">📂 ${x.name} <span class="dim">(받아 둔 것 열기 · 내 수정 그대로)</span></button><button data-re="${x.name}" title="Claude 초안으로 처음부터 다시(지금 판은 이전 판에 남아요)">↺ 다시 받기</button></div>`
-      : `<button data-in="${x.name}">📥 ${x.name}</button>`).join("") || '<p class="dim">새 초안이 없어요.</p>';
-    const take = async (n, ow) => { const r = await api("/api/inbox/take", { name: n, overwrite: ow }); if (r && r.exists && !ow) return loadProj(n); loadProj(n); };
+    box.innerHTML = ((r.items || []).map((x) => `<div class="row" style="margin:3px 0">${x.have
+      ? `<button class="grow" data-n2="${x.name}">📂 ${x.name} <span class="dim">(받아 둔 것 열기 · 내 수정 그대로)</span></button><button data-re="${x.name}" title="Claude 초안으로 처음부터 다시(지금 판은 이전 판에 남아요)">↺</button>`
+      : `<button class="grow" data-in="${x.name}">📥 ${x.name}</button>`}<button data-hide="${x.name}" title="초안 목록에서 지우기">🗑</button></div>`).join("") || '<p class="dim">새 초안이 없어요.</p>')
+      + ((r.hidden || []).length ? `<details style="margin-top:6px"><summary class="dim" style="font-size:12px;cursor:pointer">지운 초안 ${r.hidden.length}개</summary>${r.hidden.map((n) => `<div class="row" style="margin:3px 0"><span class="grow dim">${n}</span><button data-show="${n}">다시 보이기</button></div>`).join("")}</details>` : "");
+    const take = async (n, ow) => { await api("/api/inbox/take", { name: n, overwrite: ow }); loadProj(n); };
     box.querySelectorAll("[data-in]").forEach((b) => (b.onclick = () => { b.textContent = "받는 중…"; take(b.dataset.in, false); }));
     box.querySelectorAll("[data-n2]").forEach((b) => (b.onclick = () => loadProj(b.dataset.n2)));
     box.querySelectorAll("[data-re]").forEach((b) => (b.onclick = () => { if (window.confirm(`"${b.dataset.re}"를 Claude 초안으로 처음부터 다시 받을까요?\n지금 고친 판은 🕘 이전 판에 남아서 되돌릴 수 있어요.`)) { b.textContent = "받는 중…"; take(b.dataset.re, true); } }));
+    box.querySelectorAll("[data-hide]").forEach((b) => (b.onclick = async () => { if (!window.confirm(`Claude 초안 "${b.dataset.hide}"를 목록에서 지울까요?\n(받아 둔 프로젝트는 그대로예요. 아래 "지운 초안"에서 다시 보이게 할 수 있어요.)`)) return; await api("/api/inbox/hide", { name: b.dataset.hide }); $("#btnOpen").onclick(); }));
+    box.querySelectorAll("[data-show]").forEach((b) => (b.onclick = async () => { await api("/api/inbox/hide", { name: b.dataset.show, show: true }); $("#btnOpen").onclick(); }));
+  });
+  api("/api/trash", {}).then((ts) => {
+    const box = $("#trashL"); if (!box || !ts.length) return;
+    box.innerHTML = `<details><summary class="dim" style="font-size:12px;cursor:pointer">🗑 휴지통 ${ts.length}개 (지운 프로젝트 되살리기)</summary>${ts.map((x) => `<div class="row" style="margin:3px 0"><span class="grow">${x.name} <span class="dim" style="font-size:11px">${new Date(x.t * 1000).toLocaleString()}</span></span><button data-rs="${x.file}">되살리기</button></div>`).join("")}</details>`;
+    box.querySelectorAll("[data-rs]").forEach((b) => (b.onclick = async () => { const r = await api("/api/trash/restore", { file: b.dataset.rs }); if (r.ok) { flash(`"${r.name}" 되살렸어요`); $("#btnOpen").onclick(); } }));
   });
   $("#modalBody").querySelectorAll("[data-n]").forEach((b) => (b.onclick = () => loadProj(b.dataset.n)));
   $("#modalBody").querySelectorAll("[data-h]").forEach((b) => (b.onclick = () => showHistory(b.dataset.h)));
+  $("#modalBody").querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
+    const n = b.dataset.del; if (!window.confirm(`프로젝트 "${n}"를 삭제할까요?\n휴지통으로 옮겨요. 열기 창 아래 🗑 휴지통에서 되살릴 수 있어요.\n(원본 영상·목소리 파일은 그대로예요.)`)) return;
+    clearTimeout(saveTimer); const r = await api("/api/project/delete", { name: n });
+    if (r.ok && n === P.name) { P = newProject(); undoS.length = redoS.length = 0; isDirty = false; try { localStorage.removeItem("lastProj"); } catch (e) {} afterLoad(); }
+    flash(r.ok ? "삭제했어요(휴지통)" : "삭제 실패: " + (r.error || "")); $("#btnOpen").onclick();
+  }));
 };
 async function showHistory(name) {
   const hs = await api("/api/history?name=" + encodeURIComponent(name));

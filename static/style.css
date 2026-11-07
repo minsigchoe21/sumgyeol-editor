@@ -98,3 +98,4 @@ footer#tl{position:absolute;left:0;right:0;bottom:0;height:250px;border-top:1px 
 #srcMon .tc{font-variant-numeric:tabular-nums;color:var(--acc);margin-right:6px}
 #srcMon .mk{border-color:var(--acc)}#srcMon .pri{background:var(--acc);color:#111;font-weight:700;border-color:var(--acc)}
 #srcMon .smAct button{padding:7px 12px}
+.plist .row button{width:auto;flex:0 0 auto;margin:0}.plist .row button.grow{flex:1;min-width:0}.plist details .row span{font-size:13px}
