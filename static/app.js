@@ -1142,12 +1142,18 @@ const DIR = { open: true, ins: "", res: null, busy: false, off: new Set() };
 const DIR_EX = ["전체를 60초 안으로 줄여 줘", "첫 문장을 더 궁금하게(훅)", "3번 뒤에 해달 털 이야기 한 문장 추가", "어려운 말을 쉽게", "끝 문장을 여운 있게"];
 function dirHtml() {
   const r = DIR.res, ss = sentClips();
-  let h = `<div class="flow"><b>① 📝 대본 지시</b> → <b>② 글 칸에서 직접 고치기</b> → <b>③ ✍ 첨삭</b></div>
-  <div class="dirBox"><div class="row" style="margin:0"><b style="font-size:13px">📝 대본 지시하기</b><span class="grow"></span><button data-d="tog" style="font-size:11px;padding:1px 7px">${DIR.open ? "접기" : "펼치기"}</button></div>`;
+  let h = `<div class="flow"><b>① ✏️ 원하는 문장 적기</b> → <b>② 글 칸에서 고치기</b> → <b>③ ✍ 첨삭</b></div>
+  <div class="dirBox"><div class="row" style="margin:0"><b style="font-size:13px">✏️ 문장 넣기</b><span class="grow"></span><button data-d="tog" style="font-size:11px;padding:1px 7px">${DIR.open ? "접기" : "펼치기"}</button></div>`;
   if (DIR.open) {
-    h += `<textarea id="dirIns" placeholder="${ss.length ? "예: 전체를 60초 안으로 / 3번과 4번을 한 문장으로 / 5번 뒤에 범고래 이야기 추가" : "예: 해달이 켈프 숲을 지키는 핵심종 이야기로 15문장 써 줘"}">${esc(DIR.ins)}</textarea>
+    const pos = DIR.pos ?? (ss.length ? ss[ss.length - 1].id : "");
+    h += `<textarea id="addTxt" placeholder="대본에 넣을 문장을 그대로 적어요. 한 줄 = 한 문장(자막 한 덩이)&#10;예)&#10;해달은 하루에 몸무게의 4분의 1을 먹습니다.&#10;그중 하나가 바로 성게죠.">${esc(DIR.add || "")}</textarea>
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin:4px 0"><label style="margin:0;font-size:12px;flex:1">넣을 곳 <select id="addPos" style="margin:0">${ss.length ? `<option value="^"${pos === "^" ? " selected" : ""}>맨 앞</option>` : ""}${ss.map((c, k) => `<option value="${c.id}"${pos === c.id ? " selected" : ""}>${c.n || k + 1}번 뒤 — ${esc((c.text || "").slice(0, 16))}</option>`).join("")}${ss.length ? "" : '<option value="">처음</option>'}</select></label>
+    <label style="margin:0;font-size:12px;white-space:nowrap"><input type="checkbox" id="addVoice" style="width:auto"${DIR.voice !== false ? " checked" : ""}> 🔊 목소리도</label></div>
+    <button id="btnAdd" class="pri" style="width:100%"${DIR.busy ? " disabled" : ""}>${DIR.busy ? esc(DIR.busy) : "✏️ 이 문장들 대본에 넣기"}</button>
+    <details style="margin-top:6px"${r ? " open" : ""}><summary class="dim" style="font-size:12px;cursor:pointer">📝 Claude에게 대본 전체 지시하기(선택)</summary>
+    <textarea id="dirIns" placeholder="${ss.length ? "예: 전체를 60초 안으로 / 3번과 4번을 한 문장으로" : "예: 해달 핵심종 이야기로 15문장 써 줘"}">${esc(DIR.ins)}</textarea>
     <div class="row" style="flex-wrap:wrap;gap:4px;margin:3px 0">${DIR_EX.map((x) => `<button data-ex="${esc(x)}" class="chip">${esc(x)}</button>`).join("")}</div>
-    <button id="btnDir" style="width:100%"${DIR.busy ? " disabled" : ""}>${DIR.busy ? "📝 Claude가 대본 쓰는 중(20~60초)…" : "📝 지시하기"}</button>`;
+    <button id="btnDir" style="width:100%"${DIR.busyDir ? " disabled" : ""}>${DIR.busyDir ? "📝 Claude가 대본 쓰는 중(20~60초)…" : "📝 지시하기"}</button>`;
     if (r && r.error) h += `<div style="color:#ff8a65;font-size:12px;margin-top:4px">${esc(r.error)}</div>`;
     if (r && r.sentences) {
       const old = Object.fromEntries(ss.map((c) => [c.id, c])); let k = 0;
@@ -1164,12 +1170,17 @@ function dirHtml() {
       h += `<div class="row"><button id="dirApply" class="pri" style="flex:1">✓ 고른 것 적용</button><button id="dirDrop">✕ 버리기</button></div><div class="dim" style="font-size:11px">적용한 뒤 Ctrl+Z로 되돌릴 수 있어요. 새 문장 자리는 영상이 비어 있어요(✂ 구간 뜨기로 채우기).</div></div>`;
     }
   }
+  if (DIR.open) h += "</details>";
   return h + "</div>";
 }
 function bindDir() {
   const q = (x) => document.querySelector("#sentList " + x);
   q('[data-d="tog"]').onclick = () => { DIR.open = !DIR.open; renderSents(); };
   const ta = q("#dirIns"); if (!ta) return; ta.oninput = () => (DIR.ins = ta.value);
+  q("#addTxt").oninput = (e) => (DIR.add = e.target.value);
+  q("#addPos").onchange = (e) => (DIR.pos = e.target.value);
+  q("#addVoice").onchange = (e) => (DIR.voice = e.target.checked);
+  q("#btnAdd").onclick = addSents;
   document.querySelectorAll("#sentList [data-ex]").forEach((b) => (b.onclick = () => { DIR.ins = (DIR.ins ? DIR.ins.trim() + "\n" : "") + b.dataset.ex; renderSents(); }));
   q("#btnDir").onclick = dirRun;
   document.querySelectorAll("#sentList .dirRes [data-k]").forEach((cb) => (cb.onchange = () => { cb.checked ? DIR.off.delete(cb.dataset.k) : DIR.off.add(cb.dataset.k); }));
@@ -1178,10 +1189,27 @@ function bindDir() {
 }
 async function dirRun() {
   const ins = (DIR.ins || "").trim(); if (!ins) return flash("지시를 먼저 적어 주세요");
-  DIR.busy = true; DIR.res = null; DIR.off.clear(); renderSents();
+  DIR.busyDir = true; DIR.res = null; DIR.off.clear(); renderSents();
   const ss = sentClips(), ch = /^소방/.test(projFolder()) ? "sobang" : "jigu";
   DIR.res = await api("/api/direct", { sents: ss.map((c) => ({ id: c.id, text: c.text || "" })), instruction: ins, channel: ch, topic: projFolder() });
-  DIR.busy = false; renderSents();
+  DIR.busyDir = false; renderSents();
+}
+// ✏️ 원하는 문장 적기(11-07 "내가 원하는 대본의 문장을 적으면 그 문장을 만들어 주는 것"): 적은 그대로 한 줄 = 한 문장으로 글 트랙에 넣고, 자리를 만들고, 목소리까지
+async function addSents() {
+  const lines = (DIR.add || "").split(/\n+/).map((x) => x.trim()).filter(Boolean); if (!lines.length) return flash("넣을 문장을 먼저 적어 주세요");
+  const ss = sentClips(), pv = $("#addPos")?.value ?? "", tpl = ss[0] || { size: 64, color: "#ffffff", y: 0.68, stroke: 8 };
+  let at = pv === "^" || !ss.length ? 0 : (() => { const c = clipById(pv) || ss[ss.length - 1]; return c.start + c.dur; })();
+  snap(); const made = [];
+  for (const tx of lines) { const d = +(estDur(tx) + 0.45).toFixed(2); insertGap(at, d);
+    const c = { id: uid(), track: "T1", kind: "text", start: at, in: 0, dur: d, text: tx, size: tpl.size, color: tpl.color, y: tpl.y, stroke: tpl.stroke }; P.clips.push(c); made.push(c); at += d; }
+  sentClips().forEach((c, k) => (c.n = k + 1));
+  DIR.add = ""; DIR.pos = made[made.length - 1].id; renderTL(); draw(); dirty(); renderSents();
+  if ($("#addVoice") ? $("#addVoice").checked : DIR.voice !== false) {
+    for (let k = 0; k < made.length; k++) { DIR.busy = `🔊 목소리 만드는 중 ${k + 1}/${made.length}…`; renderSents(); const ok = await sentVoice(made[k], true); if (!ok) break; }
+    DIR.busy = false; renderSents();
+  }
+  const first = document.querySelector(`.srow[data-id="${made[0].id}"]`); if (first) { first.scrollIntoView({ block: "center" }); first.classList.add("cur"); }
+  flash(`문장 ${made.length}개를 넣었어요 → 글 칸에서 고치고 ✍ 첨삭`);
 }
 function insertGap(at, d) {   // at 자리에 d초를 모든 트랙에 끼워 넣어요(걸친 영상·소리는 나눠서 뒤쪽을 밀어요)
   P.clips.filter((x) => x.track !== "T1" && x.start < at - 1e-3 && x.start + x.dur > at + 1e-3).forEach((x) => splitAtRaw(x, at));
