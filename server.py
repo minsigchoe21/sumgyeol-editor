@@ -438,7 +438,8 @@ SCHEMAS_PRF = {"proofread": {"type": "object", "properties": {"items": {"type": 
     "options": {"type": "array", "items": {"type": "object", "properties": {"text": S_STR, "why": S_STR}, "required": ["text", "why"]}}},
     "required": ["id", "ok", "issues", "options"]}}}, "required": ["items"]}}
 PRF_HOW = {"": "맞춤법·띄어쓰기·어색한 표현을 바로잡고 자연스럽게", "short": "뜻은 그대로 두고 더 짧게(글자 수 20~35% 줄이기)", "hook": "다음 문장이 궁금해지게(질문·반전·숫자 강조), 과장 없이",
-           "easy": "초등학생도 바로 알아듣게 쉬운 말로", "voice": "소리 내 읽을 때 리듬이 좋게(쉼표 위치, 숫자·외래어 읽기 쉽게)"}
+           "easy": "초등학생도 바로 알아듣게 쉬운 말로", "voice": "소리 내 읽을 때 리듬이 좋게(쉼표 위치, 숫자·외래어 읽기 쉽게)",
+           "dir": "사용자 요청(방향)대로 이 문장을 새로 써요. 원래 문장에 묶이지 말고 방향을 가장 우선해요. 안 3개는 서로 다른 느낌으로"}
 def proofread(sents, targets, channel, how, extra):
     SCHEMAS.update(SCHEMAS_PRF)
     ch = next((c for c in channels() if c["id"] == channel), None)
@@ -449,7 +450,7 @@ def proofread(sents, targets, channel, how, extra):
         "규칙:\n- 문장 하나씩 따로 첨삭해요. 앞뒤 문장과 이어지는 흐름도 봐요(같은 말 반복, 접속어).\n- 끝맺음 말투(~입니다/~죠 등)는 원래 대본의 말투를 따라요.\n"
         "- 사실·숫자·연도·이름은 바꾸지 마요. 의심스러우면 issues에 '사실 확인 필요: …'로만 적어요. 새 사실을 지어내지 마요.\n"
         "- 한 문장은 TTS로 읽혀요(초당 약 6.3음절). 너무 길면(9초 넘게 걸림) 짧게 하는 안을 꼭 하나 넣어요.\n"
-        "- options: 고친 안 2~3개. 첫 번째는 가장 적게 고친 안. why는 무엇을 왜 고쳤는지 한국어 한 줄.\n"
+        + ("- options: 방향을 따른 서로 다른 안 3개. why는 어떤 느낌·무엇을 살렸는지 한국어 한 줄.\n" if how == "dir" else "- options: 고친 안 2~3개. 첫 번째는 가장 적게 고친 안. why는 무엇을 왜 고쳤는지 한국어 한 줄.\n") +
         "- 고칠 게 없으면 ok=true, issues=[], options에 더 좋아질 수 있는 안 1개만(없으면 빈 배열).\n- 대상 문장마다 items 하나씩, id는 대괄호 속 그대로. answer 도구로 돌려줘요.")
     return claude(prompt, 4000, "proofread")
 
@@ -473,6 +474,25 @@ def direct(sents, instruction, channel, topic):
         "- 사실·숫자는 확실한 것만. 확인이 필요한 사실은 check에 '문장 내용 → 확인할 것'으로 적어요. 지어내지 마요.\n"
         "- why: 바꾼 이유 한국어 한 줄. summary_ko: 무엇을 했는지 한두 문장.")
     return claude(prompt, 6000, "direct")
+
+# ✨ 방향 → 문장 추천(11-07 "내가 원하는 방향을 제시하면 네가 문장을 만들어 주는 것을 추천"): 넣을 자리(앞뒤 문장)와 방향을 보고 새 문장 후보 3개
+SCHEMAS_SUG = {"suggest": {"type": "object", "properties": {"options": {"type": "array", "items": {"type": "object", "properties": {"text": S_STR, "why": S_STR}, "required": ["text", "why"]}},
+    "check": {"type": "array", "items": S_STR}}, "required": ["options"]}}
+def suggest(sents, after, direction, channel, topic):
+    SCHEMAS.update(SCHEMAS_SUG)
+    ch = next((c for c in channels() if c["id"] == channel), None)
+    lines = []; placed = after == "^"
+    if placed: lines.append(">>> [여기에 새 문장] <<<")
+    for k, x in enumerate(sents):
+        lines.append(f"{k + 1}. {x['text']}")
+        if x["id"] == after: lines.append(">>> [여기에 새 문장] <<<"); placed = True
+    if not placed: lines.append(">>> [여기에 새 문장] <<<")
+    prompt = ((f"채널: {ch['name']}\n채널 규칙:\n{ch['rules']}\n\n" if ch else "") + (f"편 주제(폴더): {topic}\n" if topic else "") +
+        "쇼츠 내레이션 대본이에요. '여기에 새 문장' 자리에 들어갈 문장을 만들어 줘요.\n" + "\n".join(lines) + f"\n\n사용자가 원하는 방향: {direction}\n\n"
+        "- 후보 3개(options), 서로 다른 느낌으로. 앞뒤 문장과 자연스럽게 이어지게, 말투는 대본을 따라요.\n"
+        "- 한 문장 = 자막 한 덩이·TTS 한 번(초당 약 6.3음절, 9초 이하). 꼭 필요하면 짧은 두 문장도 돼요.\n"
+        "- 사실·숫자는 확실한 것만. 확인이 필요한 사실은 check에 적어요. 지어내지 마요.\n- why: 어떤 느낌인지 한국어 한 줄. answer 도구로 돌려줘요.")
+    return claude(prompt, 2000, "suggest")
 
 WONDER = ["bioluminescence", "murmuration starlings", "mimic octopus", "cuttlefish color change", "volcano lava flow", "aurora timelapse", "jellyfish swarm",
           "coral spawning", "humpback whale breach", "slime mold timelapse", "lightning storm slow motion", "glacier calving", "sardine run", "manta ray",
@@ -960,6 +980,8 @@ class H(BaseHTTPRequestHandler):
             import tts_local; return self._json(tts_local.STATE)
         if p == "/api/clip_fix":
             j = self._body(); return self._json(clip_fix(j.get("id"), j.get("text", ""), j.get("comment", ""), j.get("cand", []), float(j.get("dur", 3)), float(j.get("in", 0))))
+        if p == "/api/suggest":
+            j = self._body(); return self._json(suggest(j.get("sents", [])[:80], j.get("after", ""), j.get("direction", ""), j.get("channel", ""), j.get("topic", "")))
         if p == "/api/direct":
             j = self._body(); return self._json(direct(j.get("sents", [])[:80], j.get("instruction", ""), j.get("channel", ""), j.get("topic", "")))
         if p == "/api/proofread":

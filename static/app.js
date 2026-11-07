@@ -698,12 +698,14 @@ function projFolder() {
 function vAt(tt) { return P.clips.filter((c) => c.track === "V1" && tt >= c.start && tt < c.start + c.dur).sort((a, b) => b.start - a.start)[0]; }
 function renderSents() {
   const box = $("#sentList"); if (!box) return; const ss = sentClips();
+  ss.forEach((c) => { if (speakOff(c)) { c.speak = ""; if (c.voice) c.voiceStale = true; } });   // 옛 글의 읽는 법이 남은 문장: 지우고 목소리 다시 만들기 표시
   if (!ss.length) { box.innerHTML = dirHtml() + '<p class="dim">아직 문장이 없어요. 위 📝 대본 지시하기에 "해달 편, 핵심종 이야기로 15문장 써 줘"처럼 적거나, 대본 추천·자막(.srt) 불러오기로 넣어 주세요.</p>'; bindDir(); return; }
   const head = dirHtml() + `<div class="row" style="flex-wrap:wrap"><button id="btnArrange">🎬 대본에 맞춰 영상 재배치</button><button id="btnVoiceAll">🔊 모든 문장 목소리 다시 만들기</button><button id="btnPrfAll" title="Claude가 문장마다 문제점과 고친 안을 보여 줘요(적용은 직접)">✍ 모든 문장 첨삭</button></div><div id="voiceState" class="dim" style="font-size:12px"></div>`;
   box.innerHTML = head + ss.map((c, i) => { const v = vAt(c.start + Math.min(0.5, c.dur / 2)); const th = v && MEDIA[v.media] ? (MEDIA[v.media].kind === "image" ? `/media/${v.media}/thumb.jpg` : `/media/${v.media}/thumb.jpg`) : "";
     return `<div class="srow" data-id="${c.id}"><div class="hdr"><b>${c.n || i + 1}</b> ${fmt(c.start)} · ${c.dur.toFixed(1)}초 <button data-act="go" title="이 문장으로 가서 재생">▶</button>${v?.ai ? ' <span style="color:#ff8a65">AI</span>' : ""}${th ? `<img src="${th}" title="지금 화면: ${MEDIA[v.media].name}">` : '<img alt="">'}</div>
     <textarea data-act="text">${(c.text || "").replace(/</g, "&lt;")}</textarea>
-    <div class="row" style="margin:4px 0 0"><input class="memo" data-act="speak" style="margin:0" placeholder="읽는 법(비우면 자동: 숫자→한글)" value="${(c.speak || "").replace(/"/g, "&quot;")}"><button data-act="voice" class="${c.voiceStale ? "on" : ""}" style="font-size:12px;padding:3px 7px;white-space:nowrap" title="${c.voiceStale ? "글을 고쳐서 목소리를 다시 만들어야 해요" : ""}">🔊 ${c.voiceStale ? "목소리 다시 만들기" : "목소리" + (c.voice && MEDIA[c.voice] ? " ✓" : "")}</button></div>
+    <div class="row" style="margin:4px 0 0"><input class="memo" data-act="dir" style="margin:0" placeholder="원하는 방향(예: 질문으로 시작 / 더 짧게 / 숫자 넣어서)" value="${esc(c.dirAsk || "")}"><button data-act="sug" style="font-size:12px;padding:3px 7px;white-space:nowrap" title="이 방향으로 Claude가 문장 3개를 추천해요">✨ 문장 추천</button></div>
+    <div class="row" style="margin:4px 0 0"><input class="memo${speakOff(c) ? " warn" : ""}" data-act="speak" style="margin:0" placeholder="읽는 법(비우면 자동: 숫자→한글)" title="${speakOff(c) ? "⚠ 글과 읽는 법이 달라요 — 비우면 글대로 읽어요" : ""}" value="${(c.speak || "").replace(/"/g, "&quot;")}"><button data-act="voice" class="${c.voiceStale ? "on" : ""}" style="font-size:12px;padding:3px 7px;white-space:nowrap" title="${c.voiceStale ? "글을 고쳐서 목소리를 다시 만들어야 해요" : ""}">🔊 ${c.voiceStale ? "목소리 다시 만들기" : "목소리" + (c.voice && MEDIA[c.voice] ? " ✓" : "")}</button></div>
     <input class="memo" data-act="memo" placeholder="코멘트·요청(예: 해달이 털 고르는 클로즈업, 바다 위에서)" value="${(c.memo || "").replace(/"/g, "&quot;")}">
     <div class="prf">${prfHtml(c)}</div>
     <div class="btns"><button data-act="prf" title="이 문장 첨삭: 문제점 + 고친 안 2~3개">✍ 첨삭</button><button data-act="cut" class="on" title="원본을 돌려 보며 I·O를 찍어 이 문장 자리에 넣기">✂ 구간 뜨기</button><button data-act="vid">🎬 쓸만한 영상</button><button data-act="img">🖼 어울리는 사진</button><button data-act="veo">✨ Veo 만들기</button>${c.veo ? '<button data-act="veoin">📥 Veo 클립 넣고 검수</button>' : ""}<button data-act="ask" class="${c.veoAsk ? "on" : ""}" title="이 문장 Veo를 Claude에게 맡겨요(저장 후 채팅에 'Veo 맡겼어')">🤖 ${c.veoAsk ? "Claude에게 맡김 ✓" : "Claude에게 맡기기"}</button></div>
@@ -714,9 +716,14 @@ function renderSents() {
   $("#btnVoiceAll").onclick = async () => { const all = sentClips(); for (let k = 0; k < all.length; k++) { $("#voiceState").textContent = `목소리 만드는 중 ${k + 1}/${all.length}…`; const ok = await sentVoice(all[k], true); if (!ok) break; } $("#voiceState").textContent = "다 만들었어요 ✓"; renderSents(); };
   box.querySelectorAll(".srow").forEach((row) => {
     const c = clipById(row.dataset.id);
-    row.querySelector('[data-act="text"]').oninput = (e) => { c.text = e.target.value; draw(); renderTL(); dirty(); };
+    row.querySelector('[data-act="text"]').oninput = (e) => { c.text = e.target.value;
+      if (c.speak && !c.speakManual) { c.speak = ""; const sp = row.querySelector('[data-act="speak"]'); sp.value = ""; sp.classList.remove("warn"); }   // 글을 고치면 예전 읽는 법은 지워요(11-07 읽는 법이 옛 글로 남던 문제)
+      if (c.voice && !c.voiceStale) { c.voiceStale = true; const vb = row.querySelector('[data-act="voice"]'); vb.classList.add("on"); vb.textContent = "🔊 목소리 다시 만들기"; }
+      draw(); renderTL(); dirty(); };
+    row.querySelector('[data-act="dir"]').oninput = (e) => { c.dirAsk = e.target.value; dirty(); };
+    row.querySelector('[data-act="sug"]').onclick = () => { if (!(c.dirAsk || "").trim()) { row.querySelector('[data-act="dir"]').focus(); return flash("원하는 방향을 먼저 적어 주세요"); } prfRun([c.id], "dir", c.dirAsk.trim()); };
     row.querySelector('[data-act="memo"]').oninput = (e) => { c.memo = e.target.value; dirty(); };
-    row.querySelector('[data-act="speak"]').oninput = (e) => { c.speak = e.target.value; dirty(); };
+    row.querySelector('[data-act="speak"]').oninput = (e) => { c.speak = e.target.value; c.speakManual = !!c.speak; e.target.classList.remove("warn"); dirty(); };
     row.querySelector('[data-act="voice"]').onclick = async (e) => { e.target.textContent = "🔊 만드는 중…"; await sentVoice(c); renderSents(); };
     row.querySelector('[data-act="go"]').onclick = () => { sel = c.id; seek(c.start); togglePlay(true); };
     row.querySelector('[data-act="prf"]').onclick = () => prfRun([c.id], "");
@@ -1095,10 +1102,10 @@ function wdiff(a, b) {   // 낱말 단위 차이: 더한 말은 노랗게, 뺀 �
 }
 function prfHtml(c) {
   const r = c.prf; if (!r) return "";
-  if (r.busy) return `<div class="dim" style="font-size:12px">✍ 첨삭 중…</div>`;
+  if (r.busy) return `<div class="dim" style="font-size:12px">${r.how === "dir" ? "✨ 문장 만드는 중…" : "✍ 첨삭 중…"}</div>`;
   if (r.error) return `<div style="color:#ff8a65;font-size:12px">✍ ${esc(r.error)}</div>`;
   const ln = (x) => `${(x || "").replace(/[\s,.?!]/g, "").length}자 · 약 ${estDur(x).toFixed(1)}초`;
-  return `<div class="prfBox"><div class="prfHd">✍ 첨삭${r.how ? " · " + (PRF_HOW.find((h) => h[0] === r.how) || ["", ""])[1] : ""}${r.ok ? ' <span style="color:#6ee7a0">✓ 크게 고칠 곳 없음</span>' : ""}<span class="grow"></span><button data-pa="close" title="닫기">✕</button></div>
+  return `<div class="prfBox"><div class="prfHd">${r.how === "dir" ? "✨ 문장 추천 · " + esc(r.extra || "") : "✍ 첨삭"}${r.how && r.how !== "dir" ? " · " + (PRF_HOW.find((h) => h[0] === r.how) || ["", ""])[1] : ""}${r.ok ? ' <span style="color:#6ee7a0">✓ 크게 고칠 곳 없음</span>' : ""}<span class="grow"></span><button data-pa="close" title="닫기">✕</button></div>
     ${(r.issues || []).map((x) => `<div class="iss${/사실/.test(x) ? " fact" : ""}">• ${esc(x)}</div>`).join("")}
     <div class="dim" style="font-size:11px;margin-top:3px">지금: ${ln(c.text)}</div>
     ${(r.options || []).map((o, k) => `<div class="opt"><div class="ot">${wdiff(c.text || "", o.text)}</div><div class="ow">${esc(o.why)} · <span class="dim">${ln(o.text)}</span></div><div class="row" style="margin:3px 0 0;gap:4px"><button data-pa="apply" data-k="${k}">적용</button><button data-pa="edit" data-k="${k}" title="글 칸에 넣고 직접 손보기">고쳐서 적용</button></div></div>`).join("")}
@@ -1117,7 +1124,7 @@ function bindPrf(row, c) {
   });
 }
 function prfApply(c, txt, keepOpen) {
-  if (!txt || txt === c.text) return; snap(); c.textPrev = c.text; c.text = txt; c.speak = "";
+  if (!txt || txt === c.text) return; snap(); c.textPrev = c.text; c.text = txt; c.speak = ""; c.speakManual = false;
   if (c.voice) c.voiceStale = true;
   if (!keepOpen) delete c.prf;
   renderTL(); draw(); dirty(); renderSents(); flash(c.voice ? "고쳤어요 — 🔊 목소리 다시 만들기를 눌러 주세요" : "고쳤어요");
@@ -1127,7 +1134,7 @@ async function prfRun(ids, how, extra = "") {
   const ch = /^소방/.test(projFolder()) ? "sobang" : "jigu";
   for (let k = 0; k < ids.length; k += 6) {   // 6문장씩 나눠 물어봐요(긴 대본도 빠르게)
     const part = ids.slice(k, k + 6);
-    part.forEach((id) => { const c = clipById(id); if (c) c.prf = { busy: true }; }); renderSents();
+    part.forEach((id) => { const c = clipById(id); if (c) c.prf = { busy: true, how }; }); renderSents();
     const r = await api("/api/proofread", { sents: all.map((x) => ({ id: x.id, n: x.n, text: x.text || "", dur: x.dur })), targets: part, channel: ch, how, extra });
     part.forEach((id) => { const c = clipById(id); if (!c) return;
       const it = (r.items || []).find((x) => x.id === id);
@@ -1142,14 +1149,15 @@ const DIR = { open: true, ins: "", res: null, busy: false, off: new Set() };
 const DIR_EX = ["전체를 60초 안으로 줄여 줘", "첫 문장을 더 궁금하게(훅)", "3번 뒤에 해달 털 이야기 한 문장 추가", "어려운 말을 쉽게", "끝 문장을 여운 있게"];
 function dirHtml() {
   const r = DIR.res, ss = sentClips();
-  let h = `<div class="flow"><b>① ✏️ 원하는 문장 적기</b> → <b>② 글 칸에서 고치기</b> → <b>③ ✍ 첨삭</b></div>
-  <div class="dirBox"><div class="row" style="margin:0"><b style="font-size:13px">✏️ 문장 넣기</b><span class="grow"></span><button data-d="tog" style="font-size:11px;padding:1px 7px">${DIR.open ? "접기" : "펼치기"}</button></div>`;
+  let h = `<div class="flow"><b>① ✨ 방향 적고 문장 추천</b> → <b>② 글 칸에서 고치기</b> → <b>③ ✍ 첨삭</b></div>
+  <div class="dirBox"><div class="row" style="margin:0"><b style="font-size:13px">✨ 새 문장 추천받기</b><span class="grow"></span><button data-d="tog" style="font-size:11px;padding:1px 7px">${DIR.open ? "접기" : "펼치기"}</button></div>`;
   if (DIR.open) {
     const pos = DIR.pos ?? (ss.length ? ss[ss.length - 1].id : "");
-    h += `<textarea id="addTxt" placeholder="대본에 넣을 문장을 그대로 적어요. 한 줄 = 한 문장(자막 한 덩이)&#10;예)&#10;해달은 하루에 몸무게의 4분의 1을 먹습니다.&#10;그중 하나가 바로 성게죠.">${esc(DIR.add || "")}</textarea>
+    h += `<textarea id="addTxt" placeholder="원하는 방향·내용을 적어요. Claude가 앞뒤 문장에 맞춰 문장 3개를 추천해요.&#10;예) 해달 털이 엄청 빽빽하다는 내용, 숫자로 놀라게">${esc(DIR.add || "")}</textarea>
     <div class="row" style="flex-wrap:wrap;gap:6px;margin:4px 0"><label style="margin:0;font-size:12px;flex:1">넣을 곳 <select id="addPos" style="margin:0">${ss.length ? `<option value="^"${pos === "^" ? " selected" : ""}>맨 앞</option>` : ""}${ss.map((c, k) => `<option value="${c.id}"${pos === c.id ? " selected" : ""}>${c.n || k + 1}번 뒤 — ${esc((c.text || "").slice(0, 16))}</option>`).join("")}${ss.length ? "" : '<option value="">처음</option>'}</select></label>
     <label style="margin:0;font-size:12px;white-space:nowrap"><input type="checkbox" id="addVoice" style="width:auto"${DIR.voice !== false ? " checked" : ""}> 🔊 목소리도</label></div>
-    <button id="btnAdd" class="pri" style="width:100%"${DIR.busy ? " disabled" : ""}>${DIR.busy ? esc(DIR.busy) : "✏️ 이 문장들 대본에 넣기"}</button>
+    <div class="row" style="margin:0;gap:4px"><button id="btnSug" class="pri" style="flex:1"${DIR.busy ? " disabled" : ""}>${DIR.busy ? esc(DIR.busy) : "✨ 문장 추천받기"}</button><button id="btnAdd" title="적은 글을 그대로(한 줄 = 한 문장) 넣기"${DIR.busy ? " disabled" : ""}>그대로 넣기</button></div>
+    ${DIR.sug ? (DIR.sug.error ? `<div style="color:#ff8a65;font-size:12px;margin-top:4px">${esc(DIR.sug.error)}</div>` : `<div class="prfBox">${(DIR.sug.options || []).map((o, k) => `<div class="opt"><div class="ot">${esc(o.text)}</div><div class="ow">${esc(o.why || "")} · <span class="dim">약 ${estDur(o.text).toFixed(1)}초</span></div><div class="row" style="margin:3px 0 0;gap:4px"><button data-sg="${k}">이걸로 넣기</button></div></div>`).join("")}${(DIR.sug.check || []).length ? `<div class="iss fact">🔎 ${DIR.sug.check.map(esc).join("<br>🔎 ")}</div>` : ""}<div class="row" style="margin:4px 0 0;gap:4px"><button id="sugAgain">↻ 다시 추천</button><button id="sugClose">닫기</button></div></div>`) : ""}
     <details style="margin-top:6px"${r ? " open" : ""}><summary class="dim" style="font-size:12px;cursor:pointer">📝 Claude에게 대본 전체 지시하기(선택)</summary>
     <textarea id="dirIns" placeholder="${ss.length ? "예: 전체를 60초 안으로 / 3번과 4번을 한 문장으로" : "예: 해달 핵심종 이야기로 15문장 써 줘"}">${esc(DIR.ins)}</textarea>
     <div class="row" style="flex-wrap:wrap;gap:4px;margin:3px 0">${DIR_EX.map((x) => `<button data-ex="${esc(x)}" class="chip">${esc(x)}</button>`).join("")}</div>
@@ -1180,7 +1188,10 @@ function bindDir() {
   q("#addTxt").oninput = (e) => (DIR.add = e.target.value);
   q("#addPos").onchange = (e) => (DIR.pos = e.target.value);
   q("#addVoice").onchange = (e) => (DIR.voice = e.target.checked);
-  q("#btnAdd").onclick = addSents;
+  q("#btnAdd").onclick = () => addSents((DIR.add || "").split(/\n+/));
+  q("#btnSug").onclick = sugRun;
+  document.querySelectorAll("#sentList [data-sg]").forEach((b) => (b.onclick = () => { const o = DIR.sug.options[+b.dataset.sg]; DIR.sug = null; addSents([o.text]); }));
+  const sa = q("#sugAgain"); if (sa) sa.onclick = sugRun; const sc = q("#sugClose"); if (sc) sc.onclick = () => { DIR.sug = null; renderSents(); };
   document.querySelectorAll("#sentList [data-ex]").forEach((b) => (b.onclick = () => { DIR.ins = (DIR.ins ? DIR.ins.trim() + "\n" : "") + b.dataset.ex; renderSents(); }));
   q("#btnDir").onclick = dirRun;
   document.querySelectorAll("#sentList .dirRes [data-k]").forEach((cb) => (cb.onchange = () => { cb.checked ? DIR.off.delete(cb.dataset.k) : DIR.off.add(cb.dataset.k); }));
@@ -1195,15 +1206,22 @@ async function dirRun() {
   DIR.busyDir = false; renderSents();
 }
 // ✏️ 원하는 문장 적기(11-07 "내가 원하는 대본의 문장을 적으면 그 문장을 만들어 주는 것"): 적은 그대로 한 줄 = 한 문장으로 글 트랙에 넣고, 자리를 만들고, 목소리까지
-async function addSents() {
-  const lines = (DIR.add || "").split(/\n+/).map((x) => x.trim()).filter(Boolean); if (!lines.length) return flash("넣을 문장을 먼저 적어 주세요");
+async function sugRun() {
+  const dir = (DIR.add || "").trim(); if (!dir) return flash("원하는 방향·내용을 먼저 적어 주세요");
+  DIR.busy = "✨ 문장 만드는 중(10~30초)…"; DIR.sug = null; renderSents();
+  const ss = sentClips(), pv = DIR.pos ?? (ss.length ? ss[ss.length - 1].id : "");
+  DIR.sug = await api("/api/suggest", { sents: ss.map((c) => ({ id: c.id, text: c.text || "" })), after: pv, direction: dir, channel: /^소방/.test(projFolder()) ? "sobang" : "jigu", topic: projFolder() });
+  DIR.busy = false; renderSents();
+}
+async function addSents(lines, keepDir) {
+  lines = lines.map((x) => x.trim()).filter(Boolean); if (!lines.length) return flash("넣을 문장을 먼저 적어 주세요");
   const ss = sentClips(), pv = $("#addPos")?.value ?? "", tpl = ss[0] || { size: 64, color: "#ffffff", y: 0.68, stroke: 8 };
   let at = pv === "^" || !ss.length ? 0 : (() => { const c = clipById(pv) || ss[ss.length - 1]; return c.start + c.dur; })();
   snap(); const made = [];
   for (const tx of lines) { const d = +(estDur(tx) + 0.45).toFixed(2); insertGap(at, d);
     const c = { id: uid(), track: "T1", kind: "text", start: at, in: 0, dur: d, text: tx, size: tpl.size, color: tpl.color, y: tpl.y, stroke: tpl.stroke }; P.clips.push(c); made.push(c); at += d; }
   sentClips().forEach((c, k) => (c.n = k + 1));
-  DIR.add = ""; DIR.pos = made[made.length - 1].id; renderTL(); draw(); dirty(); renderSents();
+  if (!keepDir) DIR.add = ""; DIR.pos = made[made.length - 1].id; renderTL(); draw(); dirty(); renderSents();
   if ($("#addVoice") ? $("#addVoice").checked : DIR.voice !== false) {
     for (let k = 0; k < made.length; k++) { DIR.busy = `🔊 목소리 만드는 중 ${k + 1}/${made.length}…`; renderSents(); const ok = await sentVoice(made[k], true); if (!ok) break; }
     DIR.busy = false; renderSents();
@@ -1238,4 +1256,11 @@ function dirApply() {
   DIR.res = null; DIR.off.clear(); DIR.open = false;
   renderTL(); draw(); dirty(); renderSents();
   flash(`적용했어요(고침 ${nEdit} · 새 문장 ${nNew} · 지움 ${del.length}) → 이제 글 칸에서 직접 고치고 ✍ 첨삭`);
+}
+
+function speakOff(c) {   // 읽는 법이 지금 글과 많이 다르면(예전 글의 읽는 법이 남은 것) 표시
+  if (!c.speak || c.speakManual) return false;
+  const bag = (x) => { const m = {}; for (const ch of (x || "").replace(/[\s.,?!~]/g, "")) m[ch] = (m[ch] || 0) + 1; return m; };
+  const a = bag(c.text), b = bag(c.speak); let same = 0, tot = 0; for (const k in a) { tot += a[k]; same += Math.min(a[k], b[k] || 0); }
+  return tot > 0 && same / tot < 0.5;
 }

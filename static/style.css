@@ -126,3 +126,4 @@ footer#tl{position:absolute;left:0;right:0;bottom:0;height:250px;border-top:1px 
 .dr .why{display:block;color:var(--dim);font-size:11px;margin-left:22px}
 .dirRes .chk{font-size:11px;color:#ff8a65;margin:6px 0;border:1px dashed #ff8a6566;border-radius:5px;padding:4px 6px}
 .tab .dirRes label.dr input{width:auto;margin:0 5px 0 0;display:inline-block}.tab .dirRes label.dr{margin:3px 0}
+.srow .memo.warn{border-color:#ff8a65;color:#ff8a65}
