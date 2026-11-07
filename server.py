@@ -750,6 +750,19 @@ def tts_make(text, speak, folder, sid=7, speed=1.15, tempo=0.94):
     save_db(); return {"id": ids[0], "speak": speak, "dur": probe(out)["dur"]}
 
 SAFE = re.compile(r"[^0-9A-Za-z가-힣_\-. ]")
+def find_chrome():   # 11-07 "기본 브라우저 크롬으로": 편집기는 크롬으로 열어요(없으면 기본 브라우저)
+    cands = []
+    for env in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        b = os.environ.get(env)
+        if b: cands.append(os.path.join(b, "Google", "Chrome", "Application", "chrome.exe"))
+    cands += ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"]
+    return next((c for c in cands if os.path.isfile(c)), None)
+def open_browser(url):
+    c = find_chrome()
+    if c:
+        try: subprocess.Popen([c, url]); return
+        except Exception as e: log(f"chrome open failed {e}")
+    webbrowser.open(url)
 def proj_path(name): return os.path.join(PROJ, SAFE.sub("_", name).strip() or "제목없음") + ".shum"
 HIST = os.path.join(PROJ, "_history")   # 11-07 "대본 수정한거 다 날라갔네" → 저장할 때마다 이전 판을 남겨요
 def hist_snap(f, force=False):
@@ -1096,7 +1109,7 @@ if __name__ == "__main__":
             if m.get("status") == "working": queue_assets(m["id"])
         s = serve(); log(f"child start {local_version()} pid {os.getpid()}")
         url = f"http://127.0.0.1:{PORT}"; print("숨결 편집기:", url, local_version(), f"(pid {os.getpid()}, 이 창을 닫으면 꺼져요)", flush=True)
-        if "--no-browser" not in sys.argv: threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        if "--no-browser" not in sys.argv: threading.Timer(0.8, lambda: open_browser(url)).start()
         try: s.serve_forever()
         except KeyboardInterrupt: pass
         if RESTART: s.server_close(); raise SystemExit(3)
