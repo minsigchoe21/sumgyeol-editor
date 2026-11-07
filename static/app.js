@@ -21,7 +21,7 @@ const clipById = (id) => P.clips.find((c) => c.id === id);
 
 // ------------------------------------------------------------ 되돌리기 ----
 function snap() { undoS.push(JSON.stringify(P)); if (undoS.length > 200) undoS.shift(); redoS.length = 0; dirty(); }
-function undo() { if (!undoS.length) return; redoS.push(JSON.stringify(P)); P = JSON.parse(undoS.pop()); afterLoad(); }
+function undo() { if (!undoS.length) return; redoS.push(JSON.stringify(P)); P = JSON.parse(undoS.pop()); afterLoad(); if (P.clips.some((c) => c.media && !MEDIA[c.media])) relink(); }
 function redo() { if (!redoS.length) return; undoS.push(JSON.stringify(P)); P = JSON.parse(redoS.pop()); afterLoad(); }
 let saveTimer = null;
 function dirty() { isDirty = true; $("#saveState").textContent = "저장 안 됨"; clearTimeout(saveTimer); saveTimer = setTimeout(save, 4000); }
@@ -40,7 +40,12 @@ async function loadMedia() {
     const img = m.kind === "audio" ? (m.status === "ready" ? `/media/${m.id}/wave.png` : "") : (m.status === "ready" ? `/media/${m.id}/thumb.jpg` : "");
     d.innerHTML = `<img src="${img}" alt=""><div class="badge">${{ video: "영상", audio: "소리", image: "그림" }[m.kind]} ${m.kind !== "image" ? m.dur.toFixed(1) + "초" : ""}</div><div class="nm">${m.status === "working" ? "준비 중… " : m.status === "error" ? "오류 " : ""}${m.name}</div>`;
     d.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/media", m.id); });
-    d.addEventListener("click", () => { MSEL = m.id; document.querySelectorAll(".mi").forEach((x) => x.classList.toggle("msel", x === d)); });
+    d.dataset.mid = m.id; if (MSELS.has(m.id)) d.classList.add("msel");
+    d.addEventListener("click", (e) => {   // Ctrl/Shift+클릭 = 여러 개 고르기
+      if (e.ctrlKey || e.metaKey || e.shiftKey) { MSELS.has(m.id) ? MSELS.delete(m.id) : MSELS.add(m.id); } else { MSELS.clear(); MSELS.add(m.id); }
+      MSEL = MSELS.has(m.id) ? m.id : [...MSELS].pop() || null; sel = null; renderTL(); renderInsp();
+      document.querySelectorAll(".mi").forEach((x) => x.classList.toggle("msel", MSELS.has(x.dataset.mid)));
+    });
     d.addEventListener("dblclick", () => insertMedia(m.id, false));
     if ((m.kind === "video" || m.kind === "image") && m.status === "ready") { const cb = document.createElement("button"); cb.textContent = "✂"; cb.title = "이 원본에서 구간 떠서 문장에 넣기"; cb.style.cssText = "position:absolute;top:3px;right:30px;padding:0 5px;font-size:12px"; cb.onclick = (e) => { e.stopPropagation(); openSrcMon({ mid: m.id }); }; d.appendChild(cb); }
     if (m.kind === "video" && m.status === "ready") { const sb = document.createElement("button"); sb.textContent = "🔗"; sb.title = "이어 붙일 비슷한 영상 찾기"; sb.style.cssText = "position:absolute;top:3px;right:3px;padding:0 5px;font-size:12px"; sb.onclick = (e) => { e.stopPropagation(); findSimilar(m.id); }; d.appendChild(sb); }
@@ -55,7 +60,18 @@ async function loadMedia() {
 $("#btnPick").onclick = async () => { $("#btnPick").textContent = "PC에서 파일을 고르세요…"; await api("/api/pick", {}); $("#btnPick").textContent = "＋ 파일 가져오기"; loadMedia(); };
 
 // 영상 붙이기(11-07 "영상 붙이기"): 미디어를 골라 재생선 자리에 끼워 넣기(,) / 덮어쓰기(.) — 프리미어와 같은 키
-let MSEL = null;
+let MSEL = null; const MSELS = new Set();
+function clearMsel() { MSEL = null; MSELS.clear(); document.querySelectorAll(".mi.msel").forEach((x) => x.classList.remove("msel")); }
+// 미디어 지우기(11-07 "미디어에서 del키 누르면 삭제"): 목록·편집용 사본만 지우고 원본 파일은 그대로. 타임라인에서 쓰는 클립도 같이 지워요(Ctrl+Z로 클립은 되돌아오고, 미디어는 원본에서 다시 연결돼요)
+async function removeMedia(ids) {
+  ids = ids.filter((id) => MEDIA[id]); if (!ids.length) return;
+  const used = P.clips.filter((c) => ids.includes(c.media) || ids.includes(c.voice));
+  const nm = ids.length === 1 ? `"${MEDIA[ids[0]].name}"` : `${ids.length}개`;
+  if (!window.confirm(`미디어 ${nm}를 목록에서 지울까요?\n원본 파일은 PC에 그대로 남아요(다시 가져오면 돼요).` + (used.some((c) => c.kind !== "text") ? `\n\n⚠ 타임라인에서 이 미디어를 쓰는 클립 ${used.filter((c) => c.kind !== "text").length}개도 같이 지워요(Ctrl+Z로 되돌리기).` : ""))) return;
+  if (used.length) { snap(); const u = new Set(used.map((c) => c.id)); P.clips = P.clips.filter((c) => !u.has(c.id) || c.kind === "text"); P.clips.forEach((c) => { if (u.has(c.id) && c.kind === "text") delete c.voice; }); if (u.has(sel)) sel = null; }
+  for (const id of ids) await api("/api/media/remove", { id });
+  clearMsel(); await loadMedia(); renderTL(); renderInsp(); draw(); if ($("#sentList")) renderSents(); flash(`미디어 ${ids.length}개를 지웠어요`);
+}
 function insertMedia(mid, overwrite) {
   const m = MEDIA[mid]; if (!m || m.status !== "ready") return; const tr = trackFor(m.kind), d = m.kind === "image" ? 5 : m.dur;
   snap();
@@ -120,7 +136,7 @@ function clipEl(c) {
 function edges(exceptId) { const a = [0, t]; for (const c of P.clips) if (c.id !== exceptId) a.push(c.start, c.start + c.dur); return a; }
 function snapTime(s, exceptId) { const th = 8 / pps; let best = s, bd = th; for (const e of edges(exceptId)) { const d = Math.abs(e - s); if (d < bd) { bd = d; best = e; } } return Math.max(0, best); }
 function startDrag(e, c, mode) {
-  e.stopPropagation(); e.preventDefault(); sel = c.id; renderInsp();
+  e.stopPropagation(); e.preventDefault(); sel = c.id; clearMsel(); renderInsp();
   const x0 = e.clientX, o = { start: c.start, in: c.in, dur: c.dur }, before = JSON.stringify(P); let moved = false;
   const m = MEDIA[c.media], maxDur = (src) => (c.kind === "video" || c.kind === "audio") && m ? (m.dur - src) / (c.speed || 1) : 1e9;
   const mv = (ev) => {
@@ -404,7 +420,7 @@ addEventListener("keydown", (e) => {
   else if (e.key === "." && MSEL) insertMedia(MSEL, true);
   else if (k === "q") rippleTrim("start");
   else if (k === "w") rippleTrim("end");
-  else if (e.key === "Delete" || e.key === "Backspace") e.shiftKey ? rippleDel() : delSel();
+  else if (e.key === "Delete" || e.key === "Backspace") { if (!sel && MSELS.size) removeMedia([...MSELS]); else e.shiftKey ? rippleDel() : delSel(); }
   else if (e.key === "ArrowLeft") seek(t - (e.shiftKey ? 1 : 1 / P.fps));
   else if (e.key === "ArrowRight") seek(t + (e.shiftKey ? 1 : 1 / P.fps));
   else if (e.key === "ArrowUp") { const e2 = edges(null).filter((x) => x < t - 0.01).sort((a, b) => b - a)[0]; seek(e2 ?? 0); }
