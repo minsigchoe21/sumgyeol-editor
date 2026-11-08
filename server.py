@@ -763,6 +763,12 @@ def open_browser(url):
         try: subprocess.Popen([c, url]); return
         except Exception as e: log(f"chrome open failed {e}")
     webbrowser.open(url)
+REVS = {}
+def proj_rev(f):
+    if f in REVS and os.path.exists(f): return REVS[f]
+    try: REVS[f] = int(json.load(open(f, encoding="utf-8")).get("rev") or 0)
+    except Exception: REVS[f] = 0
+    return REVS[f]
 def proj_path(name): return os.path.join(PROJ, SAFE.sub("_", name).strip() or "제목없음") + ".shum"
 HIST = os.path.join(PROJ, "_history")   # 11-07 "대본 수정한거 다 날라갔네" → 저장할 때마다 이전 판을 남겨요
 def hist_snap(f, force=False):
@@ -856,6 +862,8 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/project":
             f = proj_path(q.get("name", [""])[0])
             return self._json(json.load(open(f, encoding="utf-8"))) if os.path.exists(f) else self._json({"error": "없음"}, 404)
+        if p == "/api/project/rev":
+            f = proj_path(q.get("name", [""])[0]); REVS.pop(f, None); return self._json({"rev": proj_rev(f) if os.path.exists(f) else -1})
         if p == "/api/history": return self._json(hist_list(q.get("name", [""])[0]))
         if p == "/api/history/get":
             rel = q.get("file", [""])[0].replace("\\", "/")
@@ -938,10 +946,13 @@ class H(BaseHTTPRequestHandler):
             return self._json(out)
         if p == "/api/project":
             j = self._body(); f = proj_path(j.get("name", "제목없음")); tmp = f + ".tmp"
+            cur = proj_rev(f); force = bool(j.pop("_force", False))   # 11-08 "수정사항이 바로바로 반영이 안 돼": 두 창(사용자·Claude)이 같은 프로젝트를 고칠 때 덮어쓰지 않게 판 번호(rev)로 확인
+            if os.path.exists(f) and not force and int(j.get("rev") or 0) < cur: return self._json({"ok": False, "conflict": True, "rev": cur})
+            j["rev"] = cur + 1
             try: hist_snap(f, force=bool(j.pop("_snap", False)))
             except Exception as e: log("history", e)
-            json.dump(j, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=1); os.replace(tmp, f)
-            return self._json({"ok": True, "path": f})
+            json.dump(j, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=1); os.replace(tmp, f); REVS[f] = j["rev"]
+            return self._json({"ok": True, "path": f, "rev": j["rev"]})
         if p == "/api/keys/set":   # 편집기 화면에서 키 넣기 → 이 PC의 키 파일에만 저장(밖으로 안 나감)
             j = self._body(); k = keys()
             for n in ("anthropic", "pexels", "pixabay"):

@@ -28,7 +28,8 @@ function dirty() { isDirty = true; $("#saveState").textContent = "저장 안 됨
 let isDirty = false;
 async function save() {
   P.name = $("#projName").value.trim() || "새 프로젝트";
-  const r = await api("/api/project", P); if (r.ok) { isDirty = false; try { localStorage.setItem("lastProj", P.name); } catch (e) {} } $("#saveState").textContent = r.ok ? "저장됨 " + new Date().toLocaleTimeString() : "저장 실패";
+  const r = await api("/api/project", P); if (r.conflict) return syncConflict(r.rev);
+  if (r.ok) { P.rev = r.rev; isDirty = false; try { localStorage.setItem("lastProj", P.name); } catch (e) {} } $("#saveState").textContent = r.ok ? "저장됨 " + new Date().toLocaleTimeString() : "저장 실패";
 }
 
 // ------------------------------------------------------------ 미디어 ----
@@ -1473,3 +1474,28 @@ function bindUpload(box) {
   let on = true; try { on = localStorage.getItem("easyMode") !== "0"; } catch (e) {}
   easyOn(on);
 })();
+
+// ------------------------------------------------------------ 창 사이 바로 반영 ----
+// 11-08 "수정사항을 전달해도 바로바로 반영이 안 되는데": Claude(또는 다른 창)가 프로젝트를 고치면 2초 안에 이 창에 불러와요. 이 창에서 고치던 중이면 어느 쪽을 쓸지 물어요.
+let syncBusy = false;
+async function syncReload(msg) {
+  const j = await api("/api/project?name=" + encodeURIComponent(P.name)); if (!j || !j.clips) return;
+  try { document.activeElement?.blur(); } catch (e) {}
+  const keepT = t, keepSel = sel; P = j; isDirty = false; afterLoad(); relink(); seek(Math.min(keepT, projDur())); if (keepSel && clipById(keepSel)) { sel = keepSel; renderInsp(); renderTL(); }
+  flash(msg || "다른 곳에서 고친 내용을 불러왔어요");
+}
+async function syncConflict(rev) {
+  if (syncBusy) return; syncBusy = true;
+  const take = confirm("Claude(또는 다른 창)가 이 프로젝트를 방금 고쳤어요.\n\n[확인] 그 내용을 불러오기(이 창에서 방금 고친 것은 사라져요, 🕘 이전 판에는 남음)\n[취소] 이 창 내용으로 덮어쓰기");
+  if (take) await syncReload("Claude가 고친 내용을 불러왔어요");
+  else { const r = await api("/api/project", Object.assign({}, P, { _force: true })); if (r.ok) { P.rev = r.rev; isDirty = false; flash("이 창 내용으로 저장했어요"); } }
+  syncBusy = false;
+}
+setInterval(async () => {
+  if (syncBusy || !P || !P.name || document.hidden && !EASY.running) return;
+  try {
+    const r = await api("/api/project/rev?name=" + encodeURIComponent(P.name)); if (!r || r.rev == null || r.rev < 0) return;
+    if (P.rev == null) { P.rev = r.rev; return; }
+    if (r.rev > P.rev) { if (isDirty || EASY.running) syncConflict(r.rev); else { syncBusy = true; await syncReload("Claude가 고친 내용을 불러왔어요 ✓"); syncBusy = false; } }
+  } catch (e) {}
+}, 2000);
