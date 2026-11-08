@@ -309,14 +309,15 @@ function renderInsp() {
 // ------------------------------------------------------------ 재생·그리기 ----
 const cv = $("#cv"), g = cv.getContext("2d");
 const EL = {};   // media id -> <video>/<audio>/<img>
-function elFor(m) {
-  if (EL[m.id]) return EL[m.id];
+function elFor(m, c) {   // 11-08 "프레임 떨어지는 거": 영상은 클립마다 따로 재생기(같은 영상을 여러 번 써도 미리 감아 두기, 바뀔 때 다시 찾지 않기)
+  const key = m.kind === "video" && c ? c.id : m.id;
+  if (EL[key]) return EL[key];
   let e;
   if (m.kind === "video") { e = document.createElement("video"); e.src = `/media/${m.id}/proxy.mp4`; e.preload = "auto"; e.playsInline = true; }
   else if (m.kind === "audio") { e = document.createElement("audio"); e.src = `/media/${m.id}/proxy.m4a`; e.preload = "auto"; }
   else { e = new Image(); e.src = `/media/${m.id}/proxy.jpg`; e.onload = () => draw(); }
   if (m.kind !== "image") e.addEventListener("seeked", () => { if (!playing) draw(); });
-  EL[m.id] = e; return e;
+  EL[key] = e; e._key = key; return e;
 }
 // 서서히 나타나기/사라지기(11-06 "영상이 서서히 사라지고 서서히 생기고"). 같은 트랙에서 겹친 뒤 클립의 fadeIn = 크로스페이드
 function fadeA(c, tt) {
@@ -346,22 +347,22 @@ function drawText(c) {
 function draw() {
   g.fillStyle = "#000"; g.fillRect(0, 0, P.w, P.h);
   const act = active(t);
-  for (const c of act.filter((c) => c.track === "V1").sort((a, b) => a.start - b.start)) { const m = MEDIA[c.media]; if (m) { g.globalAlpha = fadeA(c, t); drawMedia(c, elFor(m)); } }
+  for (const c of act.filter((c) => c.track === "V1").sort((a, b) => a.start - b.start)) { const m = MEDIA[c.media]; if (m) { g.globalAlpha = fadeA(c, t); drawMedia(c, elFor(m, c)); } }
   for (const c of act.filter((c) => c.kind === "text")) { g.globalAlpha = fadeA(c, t); drawText(c); }
   g.globalAlpha = 1;
 }
 function sync(hard) {
   const act = active(t), used = new Set();
   for (const c of act) {
-    if (c.kind !== "video" && c.kind !== "audio") continue; const m = MEDIA[c.media]; if (!m) continue; const e = elFor(m); used.add(m.id);
+    if (c.kind !== "video" && c.kind !== "audio") continue; const m = MEDIA[c.media]; if (!m) continue; const e = elFor(m, c); used.add(e._key);
     const want = c.in + (t - c.start) * (c.speed || 1); e.playbackRate = c.speed || 1; e.volume = Math.min(1, Math.max(0, (c.vol ?? 1) * fadeA(c, t))); e.muted = (c.vol ?? 1) === 0;
-    if (playing) { if (e.paused) { e.currentTime = want; e.play().catch(() => {}); } else if (Math.abs(e.currentTime - want) > 0.25) e.currentTime = want; }
+    if (playing) { if (e.paused) { if (Math.abs(e.currentTime - want) > 0.12) e.currentTime = want; e.play().catch(() => {}); } else if (Math.abs(e.currentTime - want) > 0.25) e.currentTime = want; }
     else if (hard || Math.abs(e.currentTime - want) > 0.03) { e.pause(); e.currentTime = want; }
   }
   for (const id in EL) if (!used.has(id) && EL[id].pause) EL[id].pause();
   if (playing) for (const c of P.clips) {   // 곧 나올 클립은 미리 그 자리로 감아 두기(끊김 줄이기)
-    if ((c.kind !== "video" && c.kind !== "audio") || c.start <= t || c.start > t + 1.2) continue; const m = MEDIA[c.media]; if (!m || used.has(m.id)) continue;
-    const e = elFor(m); if (Math.abs(e.currentTime - c.in) > 0.05) e.currentTime = c.in;
+    if ((c.kind !== "video" && c.kind !== "audio") || c.start <= t || c.start > t + 2.5) continue; const m = MEDIA[c.media]; if (!m) continue;
+    const e = elFor(m, c); if (used.has(e._key)) continue; e.playbackRate = c.speed || 1; if (e.preload !== "auto") e.preload = "auto"; if (Math.abs(e.currentTime - c.in) > 0.05) e.currentTime = c.in;
   }
 }
 function seek(s) { t = Math.max(0, s); if (playing) { t0 = t; wall0 = performance.now(); } placeHead(); sync(true); draw(); }
@@ -904,8 +905,8 @@ async function exportPreview() {
   if (!P.clips.length) return; if (playing) togglePlay(false);
   const ov = document.createElement("div"); ov.id = "updOv"; document.body.appendChild(ov);
   ov.textContent = "미리보기 준비 중(영상 불러오기)…"; await waitAllReady();
-  const ms = [...new Set(P.clips.filter((c) => c.media && MEDIA[c.media]).map((c) => c.media))];
-  await Promise.all(ms.map((id) => new Promise((res) => { const e = elFor(MEDIA[id]); if (MEDIA[id].kind === "image") { e.complete ? res() : (e.onload = res); return; } audioRoute(e); if (e.readyState >= 3) res(); else { e.addEventListener("canplaythrough", res, { once: true }); setTimeout(res, 8000); e.load(); } })));
+  const ms = P.clips.filter((c) => c.media && MEDIA[c.media]).map((c) => [c.media, c]);
+  await Promise.all(ms.map(([id, c]) => new Promise((res) => { const e = elFor(MEDIA[id], c); if (MEDIA[id].kind === "image") { e.complete ? res() : (e.onload = res); return; } audioRoute(e); if (e.readyState >= 3) res(); else { e.addEventListener("canplaythrough", res, { once: true }); setTimeout(res, 8000); e.load(); } })));
   await AC.resume();
   const stream = cv.captureStream(30); ADEST.stream.getAudioTracks().forEach((tr) => stream.addTrack(tr));
   const mime = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"].find((m) => MediaRecorder.isTypeSupported(m));
