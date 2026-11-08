@@ -402,6 +402,8 @@ requestAnimationFrame(loop);
 addEventListener("keydown", (e) => {
   if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
   const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+  // 11-08 "10번이 두 개": 쉬운 화면에선 모르고 누른 키로 문장이 잘리지 않게, 재생(스페이스)·되돌리기·저장·←→만 받아요
+  if (document.body.classList.contains("easy") && !(e.code === "Space" || e.key === "ArrowLeft" || e.key === "ArrowRight" || (mod && ["z", "y", "s"].includes(k)))) return;
   if (mod) {   // 프리미어와 같은 단축키
     if (k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     else if (k === "y") { e.preventDefault(); redo(); }
@@ -447,7 +449,22 @@ async function relink() {   // 다른 PC에서 저장한 프로젝트면 src로 
   await waitAllReady(); const bad = P.clips.filter((c) => c.media && !MEDIA[c.media]).length; if (bad) alert(`원본을 못 찾은 클립 ${bad}개 — 01_쇼츠\\sources 에 원본이 있는지 확인하세요.`);
   renderTL(); draw();
 }
+function healSplits() {   // 같은 문장이 잘려 두 개가 된 것(같은 글·붙어 있음)을 다시 하나로, 같은 목소리 조각도 이어 붙여요
+  let n = 0; const T = P.clips.filter((c) => c.kind === "text" && c.track === "T1").sort((a, b) => a.start - b.start);
+  for (let i = T.length - 1; i > 0; i--) {
+    const a = T[i - 1], b = T[i];
+    if (a.text === b.text && Math.abs(a.start + a.dur - b.start) < 0.02) {
+      a.dur = +(a.dur + b.dur).toFixed(4); if (!a.voice && b.voice) a.voice = b.voice;
+      P.clips = P.clips.filter((x) => x !== b); P.clips.forEach((x) => { if (x.voiceOf === b.id) x.voiceOf = a.id; }); n++;
+    }
+  }
+  const A = P.clips.filter((c) => c.track === "A1" && c.voiceOf).sort((a, b) => a.start - b.start);
+  for (let i = A.length - 1; i > 0; i--) { const a = A[i - 1], b = A[i]; if (a.media === b.media && a.voiceOf === b.voiceOf && Math.abs(a.start + a.dur - b.start) < 0.02 && Math.abs((a.in || 0) + a.dur - (b.in || 0)) < 0.02) { a.dur = +(a.dur + b.dur).toFixed(4); P.clips = P.clips.filter((x) => x !== b); n++; } }
+  if (n) { sentClips().forEach((c, k) => (c.n = k + 1)); setTimeout(dirty, 0); }
+  return n;
+}
 function afterLoad() {
+  healSplits();
   $("#projName").value = P.name; $("#aspect").value = `${P.w}x${P.h}`; cv.width = P.w; cv.height = P.h;
   if (sel && !clipById(sel)) sel = null; renderTL(); renderInsp(); seek(Math.min(t, projDur()));
   try { if (!EASY.running) { EASY.log = []; EASY.open = {}; } renderEasy();
