@@ -1285,7 +1285,7 @@ function easyOn(on) {
   setTimeout(() => { draw(); }, 50);
 }
 function sceneOf(c) { return P.clips.filter((x) => x.track === "V1" && x.start < c.start + c.dur - 0.05 && x.start + x.dur > c.start + 0.05).sort((a, b) => a.start - b.start); }
-function thumbOf(c) { const v = sceneOf(c)[0]; return v && MEDIA[v.media] ? `/media/${v.media}/thumb.jpg` : ""; }
+function thumbOf(c) { const v = sceneOf(c)[0]; if (v && !MEDIA[v.media] && !EASY._ml) { EASY._ml = true; loadMedia().then(() => { EASY._ml = false; renderEasy(); draw(); }); } return v && MEDIA[v.media] ? `/media/${v.media}/thumb.jpg` : v ? `/media/${v.media}/thumb.jpg` : ""; }
 function easyTodo() {   // 남은 할 일
   const ss = sentClips(), out = [];
   ss.forEach((c, k) => {
@@ -1486,6 +1486,7 @@ let syncBusy = false;
 async function syncReload(msg) {
   const j = await api("/api/project?name=" + encodeURIComponent(P.name)); if (!j || !j.clips) return;
   try { document.activeElement?.blur(); } catch (e) {}
+  if (j.clips.some((x) => x.media && !MEDIA[x.media])) await loadMedia();   // Claude가 새로 넣은 영상(새 미디어)도 목록에 불러와요 — 11-08 "장면 없음 → 장면이 있는데"
   const keepT = t, keepSel = sel; P = j; isDirty = false; afterLoad(); relink(); seek(Math.min(keepT, projDur())); if (keepSel && clipById(keepSel)) { sel = keepSel; renderInsp(); renderTL(); }
   flash(msg || "다른 곳에서 고친 내용을 불러왔어요");
 }
