@@ -799,6 +799,8 @@ async function clipFix(c, memoArg, outEl) {
     if (typeof r.clip_in === "number") c.in = Math.max(0, r.clip_in);
     if (r.zoomEnd != null) { c.xEnd = c.xEnd ?? c.x; c.yEnd = c.yEnd ?? c.y; }
     renderTL(); renderInsp(); draw(); dirty();
+  } else if (r.action === "search" && document.body.classList.contains("easy")) {
+    return r;   // 쉬운 화면: 카드 안에서 찾기 결과를 보여 줘요(easyFind)
   } else if (r.action === "search") {
     renderInsp(); out.textContent = "🤖 " + c.fixReply + " → 새 영상 후보를 찾는 중(자세히 편집의 영상 찾기 탭)…";
     document.querySelector('[data-tab="find"]').click(); $("#q").value = r.search_query || sent?.text || ""; $("#btnFind").click(); return;
@@ -1304,7 +1306,7 @@ function renderEasy() {
   box.innerHTML = h + "</div>";
   box.querySelector(".ebody").scrollTop = sc;
   box.querySelectorAll("[data-st]").forEach((b) => (b.onclick = () => { if (EASY.running && b.dataset.st !== "build") return flash("영상을 만드는 중이에요. 끝나면 넘어가요"); setStage(b.dataset.st); }));
-  if (st === "script") bindScript(box); else if (st === "build") bindBuild(box); else if (st === "review") bindReview(box); else bindUpload(box);
+  if (st === "script") bindScript(box); else if (st === "build") bindBuild(box); else if (st === "review") { bindReview(box); bindFind(); } else bindUpload(box);
 }
 // ---- ① 대본 확인
 const FEEL_EX = ["다큐처럼 차분하고 신뢰감 있게", "미스터리·반전으로 끝까지 궁금하게", "유머러스하고 가볍게", "감동적이고 여운 있게", "빠른 템포, 숫자로 놀라게", "아이에게 설명하듯 쉽게"];
@@ -1421,6 +1423,7 @@ function easyReview(ss) {
         <div class="etext"><b>${c.n || k + 1}</b> ${esc(c.text)} <span class="dim">· ${c.dur.toFixed(1)}초</span></div>
         <div class="erow"><button data-e="ok" class="${c.ok === true ? "on" : ""}">👍 좋아요</button><button data-e="pick" title="이 편 영상 중에서 골라 바로 바꾸기">🎞 장면 바꾸기</button><button data-e="fix" class="${EASY.open[c.id] ? "on" : ""}" title="말로 요청하면 Claude가 고쳐요(20~40초)">✏️ 고쳐 줘</button>${c.veoAsk ? '<span class="dim" style="font-size:11px">✨ Veo 맡김</span>' : ""}</div>
         ${!EASY.open[c.id] && c.fixMsg ? `<div class="dim" style="font-size:12px;margin-top:4px">${esc(c.fixMsg)}</div>` : ""}
+        ${(EASY.ef || {})[c.id] ? `<div class="efind">${EASY.ef[c.id]}</div>` : ""}
         ${EASY.open[c.id] ? `<div class="efix"><textarea data-e="cm" rows="2" placeholder="어떻게 바꿀까요? 예) 해달 얼굴이 잘 보이게 / 더 밝은 장면 / 성게가 나오는 걸로 / 너무 빨라 / Veo로 만들어">${esc(c.reviewMemo || "")}</textarea><button data-e="go" class="pri">🤖 이대로 고쳐 줘</button><div class="dim" data-e="out" style="font-size:12px">${esc(c.fixMsg || "")}</div></div>` : ""}
       </div></div>`; }).join("")}
     <div class="efoot"><button id="eDone" class="big pri">✅ 영상 확정 → ④ 올리기</button><button id="eBack" class="big">← 대본 다시 고치기</button></div>`;
@@ -1445,6 +1448,7 @@ function bindReview(box) {
       if (/veo/i.test(memo)) { c.memo = (c.memo ? c.memo + " / " : "") + memo; c.veoAsk = true; c.fixMsg = "✨ Veo로 만들도록 Claude에게 맡겼어요 → 채팅에 \"Veo 맡겼어\""; await save(); renderEasy(); return; }
       if (!v.length) { c.fixMsg = "이 문장에 장면이 없어요. ② 영상 만들기를 다시 하거나, 🛠 자세히 편집의 ✂ 구간 뜨기로 넣어 주세요."; renderEasy(); return; }
       const before = JSON.stringify(P); const r = await clipFix(v[0], memo, out);
+      if (r?.action === "search") { c.fixMsg = "🤖 " + (v[0].fixReply || "") ; EASY.open[c.id] = true; renderEasy(); easyFind(c, memo, r.search_query); return; }
       c.fixMsg = r?.error ? r.error : "🤖 " + (v[0].fixReply || "고쳤어요") + " — 다시 보고 👍 눌러 주세요"; c.ok = false; EASY.open[c.id] = !!r?.error;
       if (JSON.stringify(P) !== before) { undoS.push(before); redoS.length = 0; }
       dirty(); renderEasy(); if (!r?.error) playRange(c.start, c.start + c.dur);
@@ -1527,4 +1531,26 @@ function pickScene(c, mid) {
   else nc.speed = Math.max(0.5, +(m.dur / d).toFixed(2));   // 짧으면 느리게 늘려 채워요
   P.clips.push(nc); c.ok = false; c.fixMsg = "🎞 장면을 바꿨어요 — 보고 👍 눌러 주세요";
   renderTL(); dirty(); renderEasy(); playRange(c.start, c.start + c.dur);
+}
+
+// 11-08 "이건 찾았다는 거야 말았다는 거야?": ✏️ 고쳐 줘가 "새로 찾기"로 판단하면, 숨은 탭이 아니라 그 카드 안에 후보를 보여 주고 [이 문장에 넣기]로 바로 넣어요.
+async function easyFind(c, memo, q) {
+  const show = (h) => { (EASY.ef = EASY.ef || {})[c.id] = h; renderEasy(); };
+  show(`<p class="dim">🔎 저작권 걱정 없는 영상·사진 찾는 중(20~40초)… ${q ? "검색어: " + esc(q) : ""}</p>`);
+  const ch = /^소방/.test(projFolder()) ? "sobang" : "jigu";
+  const go = async (kind) => api("/api/sent_search", { text: c.text, note: memo + (q ? " / search: " + q : ""), topic: P.name, channel: ch, kind, ...condOpt() });
+  const [rv, ri] = await Promise.all([go("video"), go("image")]);
+  const items = [...(rv.items || []).slice(0, 8), ...(ri.items || []).slice(0, 4)]; EASY.finds = EASY.finds || {}; EASY.finds[c.id] = items;
+  if (!items.length) return show(`<p class="dim">못 찾았어요(${esc(rv.error || ri.error || "결과 없음")}). 고쳐 줘에 원하는 장면을 더 구체적으로 적거나 "Veo로"라고 적어 주세요. <button data-fx="close">닫기</button></p>`);
+  show(`<div class="dim" style="font-size:12px;margin:6px 0 4px">🔎 찾은 후보 ${items.length}개 — 누르면 받아서 이 문장에 바로 넣어요 <button data-fx="close" style="font-size:11px;padding:1px 6px">닫기</button></div><div class="fgrid">` + items.map((it, i) => `<div class="fi2"><img src="${esc(it.thumb)}" loading="lazy"><div class="m"><span class="cb" style="background:${COND_COLOR[it.cond] || "#888"}">${esc(it.cond_ko)}</span> ${it.kind === "image" ? "🖼" : "🎬"} ${esc((it.why || "").slice(0, 40))} <a href="${esc(it.page)}" target="_blank">원본</a></div><button data-fk="${i}">이 문장에 넣기</button></div>`).join("") + "</div>");
+}
+function bindFind() {
+  document.querySelectorAll(".ecard .efind [data-fx]").forEach((b) => (b.onclick = () => { const id = b.closest(".ecard").dataset.id; delete EASY.ef[id]; renderEasy(); }));
+  document.querySelectorAll(".ecard .efind [data-fk]").forEach((b) => (b.onclick = async () => {
+    const id = b.closest(".ecard").dataset.id, c = clipById(id), it = EASY.finds[id][+b.dataset.fk];
+    b.textContent = "받는 중…"; b.disabled = true;
+    const f = await api("/api/fetch", { ...it, folder: projFolder() });
+    if (f.error || !f.ids?.length) { b.textContent = "실패"; b.title = f.error || ""; return; }
+    await waitAllReady(); placeInRange(f.ids[0], c.start, c.dur, it.kind === "image"); delete EASY.ef[id]; c.ok = false; c.fixMsg = "🔎 찾은 " + (it.kind === "image" ? "사진" : "영상") + "을 넣었어요 — 보고 👍 (출처는 ④ 출처 문구에 자동으로)"; renderTL(); dirty(); renderEasy(); playRange(c.start, c.start + c.dur);
+  }));
 }

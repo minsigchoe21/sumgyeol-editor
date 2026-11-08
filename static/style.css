@@ -171,3 +171,5 @@ header button{white-space:nowrap}#saveState{font-size:11px;white-space:nowrap}
 .sp{border:1px solid var(--line);border-radius:8px;padding:4px;background:#11141a;cursor:pointer}.sp:hover{border-color:var(--acc)}.sp.cur{border-color:#3fae72}
 .sp .pv{position:relative;aspect-ratio:9/12;background:#000 center/cover;border-radius:6px;overflow:hidden}.sp video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .15s}
 .sp .nm{font-size:11px;margin-top:3px;line-height:1.3;height:2.6em;overflow:hidden}.sp button{font-size:11px;padding:1px 6px}
+.efind{margin-top:6px}.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px}
+.fi2{border:1px solid var(--line);border-radius:7px;overflow:hidden;background:#0d1015}.fi2 img{width:100%;height:84px;object-fit:cover;display:block}.fi2 .m{font-size:10px;padding:3px 4px;line-height:1.35}.fi2 .m a{color:#7fd0ff}.fi2 .cb{color:#111;font-weight:700;padding:0 3px;border-radius:3px}.fi2 button{width:100%;border:0;border-top:1px solid var(--line);border-radius:0;font-size:12px;padding:4px}
