@@ -173,3 +173,4 @@ header button{white-space:nowrap}#saveState{font-size:11px;white-space:nowrap}
 .sp .nm{font-size:11px;margin-top:3px;line-height:1.3;height:2.6em;overflow:hidden}.sp button{font-size:11px;padding:1px 6px}
 .efind{margin-top:6px}.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px}
 .fi2{border:1px solid var(--line);border-radius:7px;overflow:hidden;background:#0d1015}.fi2 img{width:100%;height:84px;object-fit:cover;display:block}.fi2 .m{font-size:10px;padding:3px 4px;line-height:1.35}.fi2 .m a{color:#7fd0ff}.fi2 .cb{color:#111;font-weight:700;padding:0 3px;border-radius:3px}.fi2 button{width:100%;border:0;border-top:1px solid var(--line);border-radius:0;font-size:12px;padding:4px}
+.erev{border:1px solid var(--acc);background:#2a2614;border-radius:9px;padding:9px 11px;margin:0 0 10px;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.erev button{margin-left:auto}

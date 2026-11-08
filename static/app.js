@@ -1322,7 +1322,9 @@ function renderEasy() {
   if (st === "script") h += easyScript(ss); else if (st === "build") h += easyBuild(); else if (st === "review") h += easyReview(ss); else h += easyUpload(ss);
   box.innerHTML = h + "</div>";
   box.querySelector(".ebody").scrollTop = sc;
-  box.querySelectorAll("[data-st]").forEach((b) => (b.onclick = () => { if (EASY.running && b.dataset.st !== "build") return flash("영상을 만드는 중이에요. 끝나면 넘어가요"); setStage(b.dataset.st); }));
+  box.querySelectorAll("[data-st]").forEach((b) => (b.onclick = () => { if (EASY.running && b.dataset.st !== "build") return flash("영상을 만드는 중이에요. 끝나면 넘어가요"); const from = stage(); setStage(b.dataset.st);
+    if (from === "script" && b.dataset.st === "review" && staleSents().length) easyRevoice(); }));   // 대본을 고치고 ③으로 오면 고친 문장 목소리를 바로 다시 만들어요
+  const rv = box.querySelector("#eRevoice"); if (rv) rv.onclick = easyRevoice;
   if (st === "script") bindScript(box); else if (st === "build") bindBuild(box); else if (st === "review") { bindReview(box); bindFind(); } else bindUpload(box);
 }
 // ---- ① 대본 확인
@@ -1339,7 +1341,7 @@ function newScriptForm(again) {
 }
 function easyScript(ss) {
   if (!ss.length) return newScriptForm(false);
-  return (EASY.again ? newScriptForm(true) : "") + `<div class="ehead"><b>대본을 읽고 고쳐 주세요</b><span class="dim"> · 글을 바로 고치거나, 방향을 적고 ✨ 추천 · ${ss.length}문장 · 약 ${ss.reduce((a, c) => a + estDur(c.text), 0).toFixed(0)}초</span><span class="grow"></span>${EASY.again ? "" : '<button id="eAgain" style="font-size:12px">🔄 대본 새로 받기</button>'}</div>
+  return (EASY.again ? newScriptForm(true) : "") + revoiceBar() + `<div class="ehead"><b>대본을 읽고 고쳐 주세요</b><span class="dim"> · 글을 바로 고치거나, 방향을 적고 ✨ 추천 · ${ss.length}문장 · 약 ${ss.reduce((a, c) => a + estDur(c.text), 0).toFixed(0)}초</span><span class="grow"></span>${EASY.again ? "" : '<button id="eAgain" style="font-size:12px">🔄 대본 새로 받기</button>'}</div>
     ${ss.map((c, k) => `${k === 0 ? `<button class="eadd" data-add="^">＋ 여기에 문장 넣기</button>` : ""}<div class="ecard" data-id="${c.id}"><div class="eno">${c.n || k + 1}</div><div class="emain">
       <textarea data-e="text" rows="2">${esc(c.text)}</textarea>
       <div class="erow"><input data-e="dir" placeholder="원하는 방향(예: 질문으로 시작, 더 짧게)" value="${esc(c.dirAsk || "")}"><button data-e="sug">✨ 추천</button><button data-e="prf" title="맞춤법·흐름 다듬기">✍ 첨삭</button><button data-e="del" title="이 문장 지우기">🗑</button></div>
@@ -1373,7 +1375,8 @@ function bindScript(box) {
     }; return; }
   box.querySelectorAll(".ecard").forEach((row) => {
     const c = clipById(row.dataset.id); if (!c) return; const q = (k) => row.querySelector(`[data-e="${k}"]`);
-    q("text").oninput = (e) => { c.text = e.target.value; if (c.speak && !c.speakManual) c.speak = ""; if (c.voice) c.voiceStale = true; c.ok = false; draw(); dirty(); };
+    q("text").oninput = (e) => { c.text = e.target.value; c.speak = ""; c.speakManual = false; if (c.voice) c.voiceStale = true; c.ok = false; draw(); dirty(); };
+    q("text").onchange = () => setTimeout(renderEasy, 50);   // 다 고치고 나가면 "목소리 다시 만들기" 안내를 보여 줘요
     q("dir").oninput = (e) => { c.dirAsk = e.target.value; dirty(); };
     q("memo").oninput = (e) => { c.memo = e.target.value; dirty(); };
     q("sug").onclick = () => { if (!(c.dirAsk || "").trim()) { q("dir").focus(); return flash("원하는 방향을 먼저 적어 주세요"); } prfRun([c.id], "dir", c.dirAsk.trim()); };
@@ -1434,7 +1437,7 @@ async function easyBuildRun() {
 // ---- ③ 영상 확인
 function easyReview(ss) {
   const nOk = ss.filter((c) => c.ok === true).length;
-  return `<div class="ehead"><b>문장마다 영상을 보고 확인해 주세요</b><span class="dim"> · 👍 ${nOk}/${ss.length}</span><span class="grow"></span><button id="ePlayAll">▶ 처음부터 보기</button></div>
+  return revoiceBar() + `<div class="ehead"><b>문장마다 영상을 보고 확인해 주세요</b><span class="dim"> · 👍 ${nOk}/${ss.length}</span><span class="grow"></span><button id="ePlayAll">▶ 처음부터 보기</button></div>
     ${ss.map((c, k) => { const th = thumbOf(c), sc = sceneOf(c), ai = sc.some((x) => x.ai);
       return `<div class="ecard rv${c.ok === true ? " good" : ""}" data-id="${c.id}"><div class="ethumb" data-e="play" style="${th ? `background-image:url(${th})` : ""}">${th ? "▶" : "장면<br>없음"}${ai ? '<span class="ai">AI</span>' : ""}</div><div class="emain">
         <div class="etext"><b>${c.n || k + 1}</b> ${esc(c.text)} <span class="dim">· ${c.dur.toFixed(1)}초</span></div>
@@ -1595,4 +1598,17 @@ function bindFind() {
     if (f.error || !f.ids?.length) { b.textContent = "실패"; b.title = f.error || ""; return; }
     await waitAllReady(); placeInRange(f.ids[0], c.start, c.dur, it.kind === "image"); delete EASY.ef[id]; c.ok = false; c.fixMsg = "🔎 찾은 " + (it.kind === "image" ? "사진" : "영상") + "을 넣었어요 — 보고 👍 (출처는 ④ 출처 문구에 자동으로)"; renderTL(); dirty(); renderEasy(); playRange(c.start, c.start + c.dur);
   }));
+}
+
+// 11-08 "영상 확인에서 수정하다가 대본 확인에서 대본을 수정했는데 반영이 안 되네": 고친 문장은 목소리만 다시 만들고(장면은 그대로, 길이만 맞춤) 바로 반영해요.
+function staleSents() { return sentClips().filter((c) => c.voiceStale || !c.voice || !MEDIA[c.voice]); }
+function revoiceBar() {
+  const n = staleSents().length; if (!n && !EASY.revoicing) return "";
+  return `<div class="erev">${EASY.revoicing ? `🔊 ${esc(EASY.revoicing)}` : `🔊 글을 고친 문장 <b>${n}개</b>는 아직 예전 목소리예요(${staleSents().slice(0, 6).map((c) => c.n).join("·")}${n > 6 ? "…" : ""}번)`}${EASY.revoicing ? "" : ` <button id="eRevoice" class="pri">지금 목소리 다시 만들기</button>`}</div>`;
+}
+async function easyRevoice() {
+  if (EASY.revoicing) return; const list = staleSents(); if (!list.length) return;
+  let k = 0; EASY.voiceErr = "";
+  for (const c of list) { k++; EASY.revoicing = `목소리 다시 만드는 중 ${k}/${list.length} — ${c.n}번`; renderEasy(); if (c.voiceStale) { c.speak = ""; c.speakManual = false; } const ok = await sentVoice(c, true); if (!ok) break; c.ok = false; c.fixMsg = "🔊 고친 글로 목소리를 다시 만들었어요 — 보고 👍"; }
+  EASY.revoicing = ""; renderEasy(); flash(EASY.voiceErr ? "목소리 오류: " + EASY.voiceErr : "고친 문장 목소리를 다시 만들었어요 ✓");
 }
