@@ -1512,6 +1512,8 @@ function scenePicker(c) {
   const ms = Object.values(MEDIA).filter((m) => m.status === "ready" && (m.kind === "video" || m.kind === "image") && (m.rel || "").startsWith(f) && !(m.rel || "").includes("/voice/"));
   const cur = new Set(sceneOf(c).map((x) => x.media)), used = {}; P.clips.filter((x) => x.track === "V1").forEach((x) => (used[x.media] = (used[x.media] || 0) + 1));
   modal(`<h3>🎞 ${c.n}번 장면 바꾸기</h3><p style="margin:0 0 6px">${esc(c.text)}</p><p class="dim" style="font-size:12px;margin:0 0 8px">마우스를 올리면 움직여요. 누르면 바로 바뀌어요(↶ 되돌리기). 원하는 부분만 쓰려면 ✂.</p>
+    <div class="row" style="margin:0 0 8px"><input id="spQ" placeholder="새 영상·사진 찾기: 원하는 장면(한국어/영어), 예) 해달 모피 사냥 옛 그림" value="${esc(c.reviewMemo || "")}"><button id="spGo" class="pri">🔎 새로 찾기</button></div>
+    <div id="spNew"></div><div class="dim" style="font-size:12px;margin:8px 0 4px">이 편에 있는 영상</div>
     <div class="spick">${ms.map((m) => `<div class="sp${cur.has(m.id) ? " cur" : ""}" data-m="${m.id}"><div class="pv" style="background-image:url(/media/${m.id}/thumb.jpg)">${m.kind === "video" ? `<video muted loop playsinline preload="none" data-src="/media/${m.id}/proxy.mp4"></video>` : ""}</div>
       <div class="nm">${esc((m.desc_ko || m.name || "").slice(0, 40))}</div><div class="row" style="margin:3px 0 0;gap:4px"><span class="dim" style="font-size:10px;flex:1">${m.kind === "video" ? m.dur.toFixed(0) + "초" : "사진"}${used[m.id] ? ` · ${used[m.id]}번 씀` : ""}${cur.has(m.id) ? " · 지금" : ""}</span>${m.kind === "video" ? `<button data-cut="${m.id}" title="원하는 부분만 골라 넣기">✂</button>` : ""}</div></div>`).join("") || '<p class="dim">이 편 폴더에 영상이 없어요.</p>'}</div>`);
   const box = $("#modalBody"); box.closest(".box").classList.add("wide");
@@ -1521,6 +1523,28 @@ function scenePicker(c) {
     d.onclick = (e) => { if (e.target.closest("[data-cut]")) return; pickScene(c, d.dataset.m); closeModal(); };
   });
   box.querySelectorAll("[data-cut]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); closeModal(); openSrcMon({ sid: c.id, mid: b.dataset.cut }); }));
+  // 11-08 "고쳐 줘 기능에서 새로운 영상 찾아서 장면 바꾸기에서 넣을 수 있게": 새로 찾기(저작권 걱정 없는 영상·사진) + 고쳐 줘가 찾아 둔 후보도 여기서
+  const showNew = (items, note) => {
+    const el = $("#spNew"); if (!el) return; EASY.finds = EASY.finds || {}; EASY.finds[c.id] = items;
+    el.innerHTML = (note ? `<div class="dim" style="font-size:12px;margin-bottom:4px">${note}</div>` : "") + (items.length ? `<div class="fgrid">` + items.map((it, i) => `<div class="fi2"><img src="${esc(it.thumb)}" loading="lazy"><div class="m"><span class="cb" style="background:${COND_COLOR[it.cond] || "#888"}">${esc(it.cond_ko)}</span> ${it.kind === "image" ? "🖼" : "🎬"} ${esc((it.why || "").slice(0, 40))} <a href="${esc(it.page)}" target="_blank">원본</a></div><button data-nk="${i}">이 문장에 넣기</button></div>`).join("") + "</div>" : "");
+    el.querySelectorAll("[data-nk]").forEach((b) => (b.onclick = async () => {
+      const it = items[+b.dataset.nk]; b.textContent = "받는 중…"; b.disabled = true;
+      const f = await api("/api/fetch", { ...it, folder: projFolder() });
+      if (f.error || !f.ids?.length) { b.textContent = "실패"; b.title = f.error || ""; return; }
+      await waitAllReady(); closeModal(); pickScene(c, f.ids[0]); if (EASY.ef) delete EASY.ef[c.id]; c.fixMsg = "🔎 새로 찾은 " + (it.kind === "image" ? "사진" : "영상") + "으로 바꿨어요 — 보고 👍"; renderEasy();
+    }));
+  };
+  if ((EASY.finds || {})[c.id]?.length) showNew(EASY.finds[c.id], "✏️ 고쳐 줘가 찾아 둔 후보");
+  const go = async () => {
+    const q = $("#spQ").value.trim(); if (!q) return flash("찾을 장면을 적어 주세요");
+    $("#spNew").innerHTML = '<p class="dim">🔎 저작권 걱정 없는 영상·사진 찾는 중(20~40초)…</p>';
+    const ch = /^소방/.test(projFolder()) ? "sobang" : "jigu";
+    const one = (kind) => api("/api/sent_search", { text: c.text, note: q, topic: P.name, channel: ch, kind, ...condOpt() });
+    const [rv, ri] = await Promise.all([one("video"), one("image")]);
+    const items = [...(rv.items || []).slice(0, 8), ...(ri.items || []).slice(0, 4)];
+    showNew(items, items.length ? `🔎 "${esc(q)}" 후보 ${items.length}개 — 누르면 받아서 바로 넣어요` : `못 찾았어요(${esc(rv.error || ri.error || "결과 없음")}). 다른 말로 찾거나 고쳐 줘에 "Veo로"라고 적어 주세요.`);
+  };
+  $("#spGo").onclick = go; $("#spQ").onkeydown = (e) => { if (e.key === "Enter") go(); };
 }
 function pickScene(c, mid) {
   const m = MEDIA[mid]; if (!m) return; snap();
