@@ -5,9 +5,9 @@
  "fps": 30,
  "v": 1,
  "folder": "지구_22_해달",
- "stage": "script",
+ "stage": "build",
  "channel": "jigu",
- "note": "11-08 해달 새 초안 v2(대본만). ① 대본 확인에서 고치고 확정하면 ② 영상 만들기가 자동으로 해요. 영상은 sources/지구_22_해달 클립을 다시 써요.",
+ "note": "11-08 18:57 사용자 \"고칠 곳 없어 진행해\" → 대본 확정. 열면 ② 영상 만들기가 자동으로 시작돼요(목소리 → 장면 배치 → 마무리). 영상은 sources/지구_22_해달 클립.",
  "clips": [
   {
    "id": "h01",
@@ -280,5 +280,6 @@
    "text": "귀여운 해달 한 마리의 식사가, 바닷속 숲 전체를 지키고 있는 겁니다.",
    "en": "One cute otter's meal is guarding an entire underwater forest."
   }
- ]
+ ],
+ "autoBuild": true
 }

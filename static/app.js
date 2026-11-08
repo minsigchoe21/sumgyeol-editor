@@ -449,7 +449,9 @@ async function relink() {   // 다른 PC에서 저장한 프로젝트면 src로 
 function afterLoad() {
   $("#projName").value = P.name; $("#aspect").value = `${P.w}x${P.h}`; cv.width = P.w; cv.height = P.h;
   if (sel && !clipById(sel)) sel = null; renderTL(); renderInsp(); seek(Math.min(t, projDur()));
-  try { if (!EASY.running) { EASY.log = []; EASY.open = {}; } renderEasy(); } catch (e) {}
+  try { if (!EASY.running) { EASY.log = []; EASY.open = {}; } renderEasy();
+    if (P.autoBuild && !EASY.running) { delete P.autoBuild; P.stage = "build"; renderEasy(); setTimeout(() => { flash("대본 확정된 초안이에요 → 영상 만들기를 자동으로 시작해요"); easyBuildRun(); }, 1500); }   // 채팅에서 "진행해"로 확정한 초안(8-72)
+  } catch (e) {}
 }
 $("#aspect").onchange = (e) => { snap(); const [w, h] = e.target.value.split("x").map(Number); P.w = w; P.h = h; afterLoad(); };
 $("#projName").onchange = dirty;
