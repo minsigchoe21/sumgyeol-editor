@@ -501,7 +501,7 @@ async function showHistory(name) {
   }));
 }
 function modal(html) { $("#modalBody").innerHTML = html; $("#modal").classList.remove("hidden"); }
-function closeModal() { $("#modal").classList.add("hidden"); }
+function closeModal() { $("#modal").classList.add("hidden"); $("#modal .box")?.classList.remove("wide"); }
 $("#modalClose").onclick = closeModal;
 
 // ------------------------------------------------------------ 탭: 대본 추천 · 영상 찾기 ----
@@ -1419,7 +1419,7 @@ function easyReview(ss) {
     ${ss.map((c, k) => { const th = thumbOf(c), sc = sceneOf(c), ai = sc.some((x) => x.ai);
       return `<div class="ecard rv${c.ok === true ? " good" : ""}" data-id="${c.id}"><div class="ethumb" data-e="play" style="${th ? `background-image:url(${th})` : ""}">${th ? "▶" : "장면<br>없음"}${ai ? '<span class="ai">AI</span>' : ""}</div><div class="emain">
         <div class="etext"><b>${c.n || k + 1}</b> ${esc(c.text)} <span class="dim">· ${c.dur.toFixed(1)}초</span></div>
-        <div class="erow"><button data-e="ok" class="${c.ok === true ? "on" : ""}">👍 좋아요</button><button data-e="fix" class="${EASY.open[c.id] ? "on" : ""}">✏️ 고쳐 줘</button>${c.veoAsk ? '<span class="dim" style="font-size:11px">✨ Veo 맡김</span>' : ""}</div>
+        <div class="erow"><button data-e="ok" class="${c.ok === true ? "on" : ""}">👍 좋아요</button><button data-e="pick" title="이 편 영상 중에서 골라 바로 바꾸기">🎞 장면 바꾸기</button><button data-e="fix" class="${EASY.open[c.id] ? "on" : ""}" title="말로 요청하면 Claude가 고쳐요(20~40초)">✏️ 고쳐 줘</button>${c.veoAsk ? '<span class="dim" style="font-size:11px">✨ Veo 맡김</span>' : ""}</div>
         ${!EASY.open[c.id] && c.fixMsg ? `<div class="dim" style="font-size:12px;margin-top:4px">${esc(c.fixMsg)}</div>` : ""}
         ${EASY.open[c.id] ? `<div class="efix"><textarea data-e="cm" rows="2" placeholder="어떻게 바꿀까요? 예) 해달 얼굴이 잘 보이게 / 더 밝은 장면 / 성게가 나오는 걸로 / 너무 빨라 / Veo로 만들어">${esc(c.reviewMemo || "")}</textarea><button data-e="go" class="pri">🤖 이대로 고쳐 줘</button><div class="dim" data-e="out" style="font-size:12px">${esc(c.fixMsg || "")}</div></div>` : ""}
       </div></div>`; }).join("")}
@@ -1434,6 +1434,7 @@ function bindReview(box) {
   box.querySelectorAll(".ecard").forEach((row) => {
     const c = clipById(row.dataset.id); if (!c) return; const q = (k) => row.querySelector(`[data-e="${k}"]`);
     q("play").onclick = () => { sel = sceneOf(c)[0]?.id || null; playRange(c.start, c.start + c.dur); };
+    q("pick").onclick = () => scenePicker(c);
     q("ok").onclick = () => { c.ok = c.ok === true ? false : true; EASY.open[c.id] = false; dirty(); renderEasy(); };
     q("fix").onclick = () => { EASY.open[c.id] = !EASY.open[c.id]; renderEasy(); setTimeout(() => document.querySelector(`.ecard[data-id="${c.id}"] [data-e="cm"]`)?.focus(), 30); };
     const cm = q("cm"); if (cm) cm.oninput = (e) => { c.reviewMemo = e.target.value; dirty(); };
@@ -1499,3 +1500,31 @@ setInterval(async () => {
     if (r.rev > P.rev) { if (isDirty || EASY.running) syncConflict(r.rev); else { syncBusy = true; await syncReload("Claude가 고친 내용을 불러왔어요 ✓"); syncBusy = false; } }
   } catch (e) {}
 }, 2000);
+
+// ------------------------------------------------------------ 🎞 장면 바꾸기(바로) ----
+// 11-08 "영상은 바로바로 편집이 안 되는데": AI를 기다리지 않고, 이 편 영상을 그림으로 보고 눌러서 바로 바꿔요. 마우스를 올리면 움직여요.
+function scenePicker(c) {
+  const f = "sources/" + projFolder() + "/";
+  const ms = Object.values(MEDIA).filter((m) => m.status === "ready" && (m.kind === "video" || m.kind === "image") && (m.rel || "").startsWith(f) && !(m.rel || "").includes("/voice/"));
+  const cur = new Set(sceneOf(c).map((x) => x.media)), used = {}; P.clips.filter((x) => x.track === "V1").forEach((x) => (used[x.media] = (used[x.media] || 0) + 1));
+  modal(`<h3>🎞 ${c.n}번 장면 바꾸기</h3><p style="margin:0 0 6px">${esc(c.text)}</p><p class="dim" style="font-size:12px;margin:0 0 8px">마우스를 올리면 움직여요. 누르면 바로 바뀌어요(↶ 되돌리기). 원하는 부분만 쓰려면 ✂.</p>
+    <div class="spick">${ms.map((m) => `<div class="sp${cur.has(m.id) ? " cur" : ""}" data-m="${m.id}"><div class="pv" style="background-image:url(/media/${m.id}/thumb.jpg)">${m.kind === "video" ? `<video muted loop playsinline preload="none" data-src="/media/${m.id}/proxy.mp4"></video>` : ""}</div>
+      <div class="nm">${esc((m.desc_ko || m.name || "").slice(0, 40))}</div><div class="row" style="margin:3px 0 0;gap:4px"><span class="dim" style="font-size:10px;flex:1">${m.kind === "video" ? m.dur.toFixed(0) + "초" : "사진"}${used[m.id] ? ` · ${used[m.id]}번 씀` : ""}${cur.has(m.id) ? " · 지금" : ""}</span>${m.kind === "video" ? `<button data-cut="${m.id}" title="원하는 부분만 골라 넣기">✂</button>` : ""}</div></div>`).join("") || '<p class="dim">이 편 폴더에 영상이 없어요.</p>'}</div>`);
+  const box = $("#modalBody"); box.closest(".box").classList.add("wide");
+  box.querySelectorAll(".sp").forEach((d) => {
+    const v = d.querySelector("video");
+    if (v) { d.onmouseenter = () => { if (!v.src) v.src = v.dataset.src; v.currentTime = Math.min(2, (MEDIA[d.dataset.m].dur || 4) / 3); v.play().catch(() => {}); v.style.opacity = 1; }; d.onmouseleave = () => { v.pause(); v.style.opacity = 0; }; }
+    d.onclick = (e) => { if (e.target.closest("[data-cut]")) return; pickScene(c, d.dataset.m); closeModal(); };
+  });
+  box.querySelectorAll("[data-cut]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); closeModal(); openSrcMon({ sid: c.id, mid: b.dataset.cut }); }));
+}
+function pickScene(c, mid) {
+  const m = MEDIA[mid]; if (!m) return; snap();
+  const a = c.start, d = c.dur; cutRange("V1", a, a + d);
+  const nc = { id: uid(), track: "V1", kind: m.kind === "image" ? "image" : "video", media: mid, src: m.rel || m.path, start: a, in: 0, dur: d, vol: 0, fit: "cover", zoom: 1, x: 0.5, y: 0.5, speed: 1 };
+  if (m.kind === "image") { nc.zoomEnd = 1.12; nc.xEnd = 0.5; nc.yEnd = 0.5; }
+  else if (m.dur >= d + 0.2) nc.in = Math.max(0, Math.min((m.dur - d) / 3, m.dur - d - 0.1));   // 앞부분(흔들림·검은 화면)을 조금 건너뛰어요
+  else nc.speed = Math.max(0.5, +(m.dur / d).toFixed(2));   // 짧으면 느리게 늘려 채워요
+  P.clips.push(nc); c.ok = false; c.fixMsg = "🎞 장면을 바꿨어요 — 보고 👍 눌러 주세요";
+  renderTL(); dirty(); renderEasy(); playRange(c.start, c.start + c.dur);
+}
